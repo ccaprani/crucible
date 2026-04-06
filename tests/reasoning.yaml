@@ -1,0 +1,120 @@
+category: reasoning
+description: Multi-step engineering calculations, probability, practical problem-solving
+
+tests:
+  - name: beam_design_as3600
+    description: Simply supported beam design to AS 3600
+    prompt: |
+      Design problem (AS 3600):
+
+      A simply supported reinforced concrete beam has:
+      - Span L = 6 m
+      - Uniformly distributed load w = 10 kN/m (already factored, i.e. w* = 10 kN/m)
+      - f'c = 40 MPa
+      - fsy = 500 MPa
+      - Effective depth d = 400 mm
+      - Beam width b = 200 mm
+      - Capacity reduction factor φ = 0.8
+      - Rectangular stress block parameters: α₂ = 0.85, γ = 0.77
+
+      Calculate step by step:
+      (a) Design bending moment M*
+      (b) Support reactions
+      (c) Required area of tensile reinforcement Ast
+
+      For (c), use the rectangular stress block approach:
+        M* = φ · α₂ · f'c · γ · k_u · d · b · d · (1 - 0.5·γ·k_u)
+        where k_u = neutral axis depth parameter
+
+      Show all working clearly.
+    eval_type: reference
+    eval_config:
+      values:
+        "M*": 45.0
+        "reaction": 30.0
+      tolerance: 0.02
+
+  - name: load_combination_stats
+    description: Statistical combination of random loads
+    prompt: |
+      A structural member is subjected to two independent random loads:
+      - Permanent load G ~ Normal(mean=50, std=5) kN
+      - Imposed load Q ~ Normal(mean=30, std=8) kN
+
+      The design load combination is S = 1.2G + 1.5Q.
+
+      Calculate:
+      1. The mean of S
+      2. The standard deviation of S
+      3. P(S > 120 kN) assuming S is normally distributed
+
+      Show all working, including the variance propagation formula.
+    eval_type: reference
+    eval_config:
+      values:
+        "mean": 105.0
+        "standard deviation": 13.42
+      tolerance: 0.05
+
+  - name: dependency_resolution
+    description: Python package dependency constraint reasoning
+    prompt: |
+      A Python package has the following dependency constraints:
+      - Package A: >=1.0, <2.0
+      - Package B: >=2.3
+      - Package C requires A>=1.5, <1.9
+
+      Question 1: What range of versions of package A satisfies all three constraints?
+
+      Question 2: Now suppose package B version 2.5 adds its own constraint: A<1.7.
+      What range of A versions now satisfies all four constraints?
+
+      Question 3: If A is only published at versions 1.0, 1.2, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0,
+      list the specific versions that work for each scenario.
+
+      Explain your reasoning clearly at each step.
+    eval_type: contains
+    eval_config:
+      required:
+        - "1.5"
+        - "1.6"
+      any_of:
+        - ["1.5, 1.6", "1.5 and 1.6", "{1.5, 1.6}", "[1.5, 1.6]"]
+
+  - name: supervision_triage
+    description: PhD student supervision time allocation
+    prompt: |
+      You are supervising 4 PhD students and have 8 hours available this week for
+      supervision activities. Allocate your time and justify your decisions.
+
+      Students:
+      - Alice: Year 1, confirmation milestone approaching in 6 weeks. Has done her
+        literature review but has no experimental data yet. Seems anxious about the
+        timeline.
+      - Bob: Year 3, writing up his thesis. Has 2 published papers. Needs feedback
+        on Chapter 4 (methodology) draft he sent last week.
+      - Carol: Year 2, experimental program stalled for 3 weeks because key lab
+        equipment is broken. Waiting on a repair quote. Getting frustrated.
+      - Dave: Year 1, strong start, has completed pilot experiments and sent you a
+        first paper draft for review.
+
+      For each student, specify: (a) time allocated, (b) what you'd do in that time,
+      (c) why this priority level.
+    eval_type: llm_judge
+    eval_config:
+      criteria: |
+        Evaluate as an experienced academic supervisor managing a research group:
+        1. PRIORITISATION (0-3): Does it correctly identify Alice (confirmation in 6
+           weeks, anxious, no data) and Carol (stalled, frustrated) as higher urgency
+           than Bob (writing, self-sufficient) and Dave (strong, paper draft)?
+           Alice needs a concrete plan to get to confirmation; Carol needs the
+           supervisor to intervene on the equipment issue, not just wait.
+        2. ACTIONS (0-3): Are the proposed activities specific and useful? "Meet with
+           Alice" is vague; "Review her confirmation timeline, agree on a plan B if
+           equipment isn't available, schedule weekly check-ins" is actionable.
+        3. TIME ALLOCATION (0-2): Do the hours sum to 8? Is the split reasonable?
+           Alice and Carol should get more than Bob and Dave.
+        4. HUMAN AWARENESS (0-2): Does it recognise the emotional dimension? Alice
+           is anxious, Carol is frustrated. Good supervision addresses the person,
+           not just the project.
+        Sum the sub-scores for the total out of 10.

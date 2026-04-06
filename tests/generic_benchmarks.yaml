@@ -1,0 +1,75 @@
+category: generic_benchmarks
+description: Established benchmark-style questions for calibration against known baselines
+
+tests:
+  - name: gsm8k_arithmetic
+    description: "Grade-school math reasoning (GSM8K-style)"
+    prompt: |
+      A farmer has 3 fields. The first field produces 250 kg of wheat per hectare,
+      the second produces 320 kg per hectare, and the third produces 180 kg per hectare.
+      The first field is 12 hectares, the second is 8 hectares, and the third is 15 hectares.
+
+      If the farmer sells wheat at $0.45 per kg, what is his total revenue?
+
+      Show your working step by step, then give the final answer as:
+      ANSWER: $<amount>
+    eval_type: reference
+    eval_config:
+      values:
+        "ANSWER": 3681.0
+      tolerance: 0.01
+
+  - name: logic_puzzle
+    description: Multi-step logical deduction
+    prompt: |
+      Five people (A, B, C, D, E) are seated in a row. Given:
+      1. A is not at either end.
+      2. B is immediately to the right of A.
+      3. C is at one of the ends.
+      4. D is not adjacent to C.
+      5. E is to the left of A.
+
+      What is the seating arrangement from left to right?
+
+      Think through each constraint step by step, then give your answer as:
+      ANSWER: <comma-separated names>
+    eval_type: contains
+    eval_config:
+      any_of:
+        - ["E, A, B, D, C", "E,A,B,D,C"]
+        - ["C, E, A, B, D", "C,E,A,B,D"]
+
+  - name: code_fizzbuzz_variant
+    description: "Classic coding challenge with a twist"
+    prompt: |
+      Write a Python function `fizzbuzz_sum(n)` that returns the sum of all numbers
+      from 1 to n (inclusive) that are NOT divisible by 3 or 5.
+
+      For example, fizzbuzz_sum(15) should skip 3,5,6,9,10,12,15 and sum the rest:
+      1+2+4+7+8+11+13+14 = 60.
+
+      Write the function and then print fizzbuzz_sum(100).
+    eval_type: code_exec
+    eval_config:
+      expected_values:
+        "fizzbuzz_sum(100)": 2632
+
+  - name: text_extraction
+    description: Precise information extraction from dense text
+    prompt: |
+      Extract the following from this text and output as JSON:
+      {"people": [...], "amounts": [...], "date": "..."}
+
+      Text: "On 14 March 2025, the board approved a $2.4M allocation to the
+      infrastructure upgrade program. Director Jane Smith proposed the motion,
+      seconded by Treasurer Ahmed Patel. CFO Li Wei noted that $800K had already
+      been committed from the FY2024 budget. The remaining $1.6M will come from
+      the capital reserve fund. Board member Rachel Kim abstained from the vote."
+
+      Output ONLY the JSON.
+    eval_type: json_valid
+    eval_config:
+      required_keys:
+        - people
+        - amounts
+        - date

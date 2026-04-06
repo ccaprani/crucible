@@ -1,0 +1,113 @@
+category: technical_writing
+description: Academic writing, documentation, professional communication, structured output
+
+tests:
+  - name: structured_explanation
+    description: Monte Carlo reliability explanation as JSON
+    prompt: |
+      Explain the Monte Carlo simulation method for structural reliability analysis.
+      Target audience: postgraduate engineering students who understand basic probability
+      but haven't done reliability analysis before.
+
+      Output your response as valid JSON with exactly these keys:
+      - "summary": a 2-3 sentence overview
+      - "steps": an array of strings, each describing one step of the method
+      - "limitations": an array of strings listing key limitations
+      - "python_example": a short Python code snippet demonstrating a basic Monte Carlo
+        reliability analysis (as a string)
+
+      Output ONLY the JSON, no other text.
+    eval_type: json_valid
+    eval_config:
+      required_keys:
+        - summary
+        - steps
+        - limitations
+        - python_example
+
+  - name: student_feedback
+    description: Constructive PhD feedback on a lit review gap
+    prompt: |
+      A PhD student has submitted a literature review chapter on bridge traffic load
+      simulation methods. The review covers:
+      - Microsimulation approaches (traffic flow models generating vehicle streams)
+      - Weigh-in-Motion (WIM) data collection and statistical analysis
+      - Influence line-based load effect computation
+
+      However, the review completely omits reliability-based approaches such as
+      FORM/SORM, Monte Carlo simulation for structural reliability, and the connection
+      between traffic loading statistics and reliability indices.
+
+      Write constructive feedback (200 words max) that:
+      1. Acknowledges the strengths of what they've covered
+      2. Identifies the gap clearly
+      3. Suggests specific topics/methods to add
+      4. Recommends 1-2 directions for integrating reliability into their framework
+    eval_type: llm_judge
+    eval_config:
+      criteria: |
+        Evaluate as an experienced academic supervisor in structural engineering:
+        1. TONE (0-3): Is the feedback constructive and encouraging while being direct?
+           Good supervisory feedback acknowledges effort before identifying gaps.
+        2. TECHNICAL ACCURACY (0-3): Does it correctly identify reliability methods
+           (FORM/SORM, Monte Carlo, reliability index) as the gap? Are suggestions
+           technically sound and specific (not vague)?
+        3. ACTIONABILITY (0-2): Does it give the student clear next steps? Can they
+           act on this feedback without further clarification?
+        4. BREVITY (0-2): Is it concise (~200 words)? Supervisory feedback that's
+           too long gets skimmed.
+        Sum the sub-scores for the total out of 10.
+
+  - name: professional_email
+    description: Professional email to chapter chairs
+    prompt: |
+      Draft a 150-word email from the chair of a national structural safety reporting
+      body to regional chapter chairs across the country.
+
+      The email announces a new CPD (Continuing Professional Development) webinar series
+      on computational methods in structural engineering, starting next quarter. Topics
+      will include finite element modelling best practices, Python for structural analysis,
+      and AI-assisted design checking.
+
+      Tone: professional but approachable — these are colleagues you work with regularly.
+      Sign off with a first name.
+    eval_type: llm_judge
+    eval_config:
+      criteria: |
+        Evaluate as someone experienced in professional engineering communications:
+        1. TONE (0-3): Professional but not stuffy? These are colleagues, not strangers.
+           Should feel like it came from a real person, not a committee.
+        2. CONTENT (0-3): Does it cover: what (CPD webinar series), when (next quarter),
+           topics (FE, Python, AI), and a call to action? No critical info missing?
+        3. STRUCTURE (0-2): Clear, scannable, appropriate length (~150 words)?
+           Engineers skim emails — dense paragraphs lose them.
+        4. AUTHENTICITY (0-2): Does it sign off with a first name?
+           Does it sound like it was written by an engineer, not a marketing team?
+        Sum the sub-scores for the total out of 10.
+
+  - name: standards_interpretation
+    description: AS 5100.2 loading model comparison
+    prompt: |
+      Explain the key differences between the SM1600 and T44 traffic loading models
+      in Australian bridge design standard AS 5100.2.
+
+      Cover:
+      1. What each model represents physically
+      2. The key load parameters (axle loads, lane loads, load factors)
+      3. When each loading model would typically govern the design
+      4. Why SM1600 replaced T44 and what gap it addressed
+
+      Be specific with numbers where possible.
+    eval_type: llm_judge
+    eval_config:
+      criteria: |
+        Evaluate as a bridge engineer familiar with Australian standards:
+        1. FACTUAL ACCURACY (0-4): Are the stated load values, model descriptions,
+           and historical context correct? SM1600 tri-axle group = 360 kN, W80 wheel
+           load = 80 kN, lane load varies with loaded length. T44 was the predecessor
+           with lighter loading. Deduct heavily for fabricated numbers.
+        2. COMPLETENESS (0-3): Does it cover all four requested aspects?
+           Physical meaning, parameters, governing conditions, historical context.
+        3. SPECIFICITY (0-3): Does it give actual numbers (kN, kN/m) rather than
+           vague descriptions? A useful answer has enough detail to do a quick check.
+        Sum the sub-scores for the total out of 10.

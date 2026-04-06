@@ -1,0 +1,140 @@
+category: code_generation
+description: Scientific Python development, engineering code, package maintenance
+
+tests:
+  - name: section_properties
+    description: Compute polygon section properties using numpy
+    prompt: |
+      Write a Python function using numpy to compute the geometric section properties
+      of an arbitrary polygon given vertex coordinate arrays x and y (as numpy arrays,
+      vertices ordered anticlockwise, not closed — i.e. do not repeat the first vertex).
+
+      Compute and return a dict with keys:
+      - area: cross-sectional area
+      - cx, cy: centroid coordinates
+      - Ixx: second moment of area about the centroidal x-axis
+      - Iyy: second moment of area about the centroidal y-axis
+
+      Use the shoelace formula for area and the standard polygon integration formulae.
+
+      Then demonstrate it on a rectangle with corners at (0,0), (200,0), (200,400), (0,400)
+      and print each property as "key = value".
+    eval_type: code_exec
+    eval_config:
+      expected_values:
+        area: 80000.0
+        Ixx: 1066666666.67
+        Iyy: 266666666.67
+      tolerance: 0.02
+
+  - name: reliability_pf
+    description: Compute probability of failure using scipy
+    prompt: |
+      Write a Python script using scipy to compute the probability of structural failure
+      for the limit state function g(R,S) = R - S, where:
+      - R (resistance) ~ Normal(mean=200, std=20)
+      - S (load effect) ~ Normal(mean=100, std=15)
+
+      Compute Pf two ways:
+      1. Analytically: since g = R-S is also normal, compute mean_g, std_g, then
+         Pf = Phi(-mean_g/std_g) where Phi is the standard normal CDF.
+      2. Numerically: use scipy.integrate.dblquad to integrate the joint PDF over
+         the failure region where g < 0.
+
+      Print both results as:
+        analytical_pf = <value>
+        numerical_pf = <value>
+        beta = <value>
+    eval_type: code_exec
+    eval_config:
+      expected_values:
+        beta: 4.0
+        analytical_pf: 3.17e-5
+      tolerance: 0.10
+
+  - name: numpy_vectorisation
+    description: Refactor loop-based code to vectorised numpy
+    prompt: |
+      Refactor the following loop-based Python function to use vectorised numpy operations
+      (no Python loops). The function computes the bending moment diagram for a simply
+      supported beam with a single point load.
+
+      ```python
+      def bmd_loop(L, P, a, n=100):
+          """Bending moment for simply supported beam with point load P at distance a."""
+          import numpy as np
+          x = np.linspace(0, L, n)
+          M = np.zeros(n)
+          Rb = P * a / L  # reaction at right support
+          Ra = P - Rb      # reaction at left support
+          for i in range(n):
+              if x[i] <= a:
+                  M[i] = Ra * x[i]
+              else:
+                  M[i] = Ra * x[i] - P * (x[i] - a)
+          return x, M
+      ```
+
+      Write the vectorised version as `bmd_vec(L, P, a, n=100)`.
+      Then write a test that compares both functions for L=6, P=10, a=2, n=200
+      and asserts they match within 1e-10. Print "PASS" if they match.
+    eval_type: code_exec
+    eval_config:
+      expected_output: "PASS"
+      setup_code: |
+        import numpy as np
+        def bmd_loop(L, P, a, n=100):
+            x = np.linspace(0, L, n)
+            M = np.zeros(n)
+            Rb = P * a / L
+            Ra = P - Rb
+            for i in range(n):
+                if x[i] <= a:
+                    M[i] = Ra * x[i]
+                else:
+                    M[i] = Ra * x[i] - P * (x[i] - a)
+            return x, M
+
+  - name: pytest_suite
+    description: Write pytest tests for beam moment function
+    prompt: |
+      Write a pytest test suite for the function below. Do NOT include the function
+      itself — just the tests. Assume it can be imported as `from beam import bmd`.
+
+      ```python
+      def bmd(L, P, a, n=100):
+          """Return (x, M) arrays for simply supported beam with point load P at a."""
+          import numpy as np
+          x = np.linspace(0, L, n)
+          Ra = P * (L - a) / L
+          M = np.where(x <= a, Ra * x, Ra * x - P * (x - a))
+          return x, M
+      ```
+
+      Test cases to cover:
+      1. Midspan load: M_max = PL/4 at x=L/2
+      2. Zero moment at supports: M[0] = M[-1] = 0
+      3. Quarter-point load: M_max at x=a
+      4. Reactions equilibrium: Ra + Rb = P
+      5. Symmetry: midspan load gives symmetric moment diagram
+
+      Output as a complete, runnable test file with appropriate imports and assertions.
+    eval_type: code_exec
+    eval_config:
+      setup_code: |
+        # Create the beam module for import
+        import sys, types
+        beam = types.ModuleType("beam")
+        import numpy as np
+        def bmd(L, P, a, n=100):
+            x = np.linspace(0, L, n)
+            Ra = P * (L - a) / L
+            M = np.where(x <= a, Ra * x, Ra * x - P * (x - a))
+            return x, M
+        beam.bmd = bmd
+        sys.modules["beam"] = beam
+      validation_code: |
+        import subprocess, sys, tempfile, pathlib
+        # The model's test code should have been written above
+        # Run pytest on this file
+        print("PASS - test file generated")

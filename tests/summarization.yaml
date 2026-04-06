@@ -1,0 +1,127 @@
+category: summarization
+description: Condensing technical content, structured extraction, triage
+
+tests:
+  - name: code_clause_extraction
+    description: Extract load factors from design standard text as YAML
+    prompt: |
+      Extract structured information from the following design standard clause text.
+      Output as valid YAML with keys: load_factors (dict), assumptions (list), scope (string).
+
+      Text:
+      "For ultimate limit state design of bridge superstructures, the following load
+      combination shall be considered: 1.2G + 1.5Q + ψ_c × W, where G is the permanent
+      action, Q is the traffic load (SM1600), and W is the wind action. The combination
+      factor ψ_c for wind shall be taken as 0.4 when traffic load is the primary action.
+      This clause applies to all road bridges with spans not exceeding 100 m. The traffic
+      load model assumes a notional lane width of 3.2 m and does not account for
+      permit vehicles or special transport. Permanent actions shall include self-weight
+      of all structural and non-structural components permanently attached to the structure."
+
+      Output ONLY the YAML, no other text.
+    eval_type: yaml_valid
+    eval_config:
+      required_keys:
+        - load_factors
+        - assumptions
+        - scope
+
+  - name: traceback_triage
+    description: Diagnose a Python/OpenSeesPy error from traceback
+    prompt: |
+      Diagnose this Python traceback and provide:
+      1. Root cause (1 sentence)
+      2. Fix (1 sentence)
+      3. The relevant file and line number
+
+      ```
+      Traceback (most recent call last):
+        File "/home/user/bridge_model/main.py", line 45, in <module>
+          run_analysis(model_params)
+        File "/home/user/bridge_model/analysis.py", line 112, in run_analysis
+          ops.element('elasticBeamColumn', ele_tag, *nodes, A, E, Iz, transf_tag)
+        File "/home/user/venv/lib/python3.11/site-packages/openseespy/opensees.py", line 287, in element
+          _opensees.element(*args)
+      RuntimeError: OPS_Error -- BasicBuilder::getNode - no node with tag 47 exists in the domain
+      ```
+    eval_type: contains
+    eval_config:
+      required:
+        - "47"
+        - "node"
+      any_of:
+        - ["analysis.py", "line 112"]
+        - ["not defined", "not been created", "doesn't exist", "does not exist", "not exist", "missing"]
+
+  - name: abstract_distillation
+    description: Extract method/finding/limitation from research abstract
+    prompt: |
+      Extract exactly three items from the following research abstract:
+      1. Method used (1 sentence max)
+      2. Key finding (1 sentence max)
+      3. Main limitation (1 sentence max)
+
+      Abstract:
+      "This paper presents a Monte Carlo simulation framework for assessing the lifetime
+      maximum traffic load effects on short-to-medium span highway bridges. Weigh-in-Motion
+      data from 14 sites across southeastern Australia, comprising over 85 million vehicle
+      records collected between 2010 and 2022, is used to calibrate statistical models of
+      vehicle weights, inter-vehicle gaps, and traffic flow rates. The simulation generates
+      synthetic traffic streams that are passed over influence lines for bending moment
+      and shear at critical sections. Results show that the characteristic load effect
+      (1000-year return period) exceeds the AS 5100.2 SM1600 design loading by 8-12% for
+      spans between 20 and 40 m, suggesting the current code may underestimate extreme
+      traffic loading for this span range. The framework is limited by the assumption of
+      stationarity in traffic growth patterns and does not account for future changes in
+      vehicle fleet composition or autonomous vehicle penetration."
+
+      Label each clearly as "Method:", "Key finding:", "Limitation:".
+    eval_type: contains
+    eval_config:
+      required:
+        - "Method"
+        - "finding"
+        - "Limitation"
+      any_of:
+        - ["Monte Carlo", "simulation", "WIM"]
+        - ["exceeds", "underestimate", "8-12%", "SM1600"]
+
+  - name: meeting_notes_extraction
+    description: Extract actions from messy meeting notes
+    prompt: |
+      Extract structured information from these research group meeting notes.
+      Output as valid JSON with keys:
+      - "decisions": array of strings (things that were decided)
+      - "action_items": array of objects with keys "who", "what", "by_when"
+      - "unresolved": array of strings (open questions not yet answered)
+
+      Meeting notes:
+      "Weekly research group meeting 2 April 2026. Present: Alex, Sarah, James, Li.
+      Apologies: Marco (conference travel).
+
+      Sarah presented her WIM data cleaning pipeline - looks good, group agreed to use
+      her outlier detection method (modified Z-score with threshold 3.5) as the standard
+      for all future WIM work in the group. James asked about heavy vehicles above
+      200 tonnes — Sarah said she filters those out but we didn't resolve whether that's
+      the right threshold or if we should investigate them separately.
+
+      James needs to finish his FE validation study by mid-April so we can include
+      results in the grant progress report. Alex to send James the experimental test
+      data from 2024 Dandenong bridge test by Friday.
+
+      Li showed preliminary footbridge vibration results — crowd loading model seems to
+      underpredict lateral acceleration. Not sure if this is a modelling issue or
+      instrumentation. Li will compare with BRO standard predictions by next meeting.
+
+      Need to decide on conference for Sarah's paper — IABSE or Australasian Structural
+      Engineering Conference. Sarah to check deadlines and report back.
+
+      Alex reminded everyone that the grant progress report is due 30 April."
+
+      Output ONLY the JSON.
+    eval_type: json_valid
+    eval_config:
+      required_keys:
+        - decisions
+        - action_items
+        - unresolved

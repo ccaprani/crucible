@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "crucible-ai"
+version = "0.1.0"
+description = "Bespoke benchmarking tool for comparing local AI models via Ollama"
+requires-python = ">=3.10"
+dependencies = [
+    "ollama",
+    "rich",
+    "pyyaml",
+    "anthropic",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["crucible"]
+
+[project.scripts]
+crucible = "crucible.run:main"
