@@ -207,7 +207,7 @@ def _cmd_list(args, console: Console):
         _TIER_COLOURS = {"8GB": "green", "16GB": "yellow", "24GB": "red"}
 
         table = Table(
-            show_header=False, box=None, padding=(0, 1),
+            show_header=True, header_style="bold dim", box=None, padding=(0, 1),
             title=f"Ollama models ({len(available_no_embed)})",
             title_style="bold", title_justify="left",
         )
