@@ -7,12 +7,26 @@ import sys
 import time
 from pathlib import Path
 
+import os
+
 from rich.console import Console
 from rich.columns import Columns
 from rich.live import Live
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
+from rich.text import Text
+
+
+_BANNER = "[bold cyan]╔═╗┬─┐┬ ┬┌─┐┬┌┐ ┬  ┌─┐[/bold cyan]\n[bold cyan]║  ├┬┘│ ││  │├┴┐│  ├┤ [/bold cyan]\n[bold cyan]╚═╝┴└─└─┘└─┘┴└─┘┴─┘└─┘[/bold cyan]"
+
+
+def _clear_and_banner(console: Console):
+    """Clear terminal and print the Crucible banner."""
+    if sys.stdout.isatty():
+        os.system("clear" if os.name != "nt" else "cls")
+    console.print(_BANNER)
+    console.print("[dim]LLM benchmark for structural engineering academics[/dim]\n")
 
 from crucible.models import list_available_models
 from crucible.report import (
@@ -174,20 +188,38 @@ def _filter_tests(tests, categories=None, test_names=None):
 
 def _cmd_list(args, console: Console):
     """List models, tests, and/or previous results."""
+    _clear_and_banner(console)
     what = getattr(args, "what", "all")
 
     if what in ("all", "models"):
         from crucible.models import get_model_info
         available = list_available_models()
         available_no_embed = [m for m in available if "embed" not in m.lower()]
-        console.print(f"\n[bold]Ollama models ({len(available_no_embed)}):[/bold]")
-        for i, name in enumerate(available_no_embed, 1):
+
+        # Gather metadata for alignment
+        infos = []
+        for name in available_no_embed:
             try:
-                mi = get_model_info(name)
-                meta = f"[dim]{mi.parameter_size} · {mi.quantization} · ~{mi.vram_gb}GB · {mi.vram_tier}[/dim]"
+                infos.append(get_model_info(name))
             except Exception:
+                infos.append(None)
+
+        name_w = max(len(n) for n in available_no_embed)
+        param_w = max((len(mi.parameter_size) for mi in infos if mi), default=0)
+        quant_w = max((len(mi.quantization) for mi in infos if mi), default=0)
+
+        console.print(f"\n[bold]Ollama models ({len(available_no_embed)}):[/bold]")
+        for i, (name, mi) in enumerate(zip(available_no_embed, infos), 1):
+            if mi:
+                meta = (
+                    f"[dim]{mi.parameter_size:>{param_w}}  "
+                    f"{mi.quantization:<{quant_w}}  "
+                    f"~{mi.vram_gb:>5.1f}GB  "
+                    f"{mi.vram_tier}[/dim]"
+                )
+            else:
                 meta = ""
-            console.print(f"  [cyan]{i:2d}[/cyan]  {name}  {meta}")
+            console.print(f"  [cyan]{i:2d}[/cyan]  {name:<{name_w}}  {meta}")
 
     if what in ("all", "tests"):
         tests = load_tests(TESTS_DIR)
@@ -256,6 +288,7 @@ def _cmd_list(args, console: Console):
 
 def _cmd_run(args, console: Console):
     """Run tests against local models."""
+    _clear_and_banner(console)
     models = args.models
     categories = args.category
     test_names = args.test
@@ -497,6 +530,7 @@ def _cmd_run(args, console: Console):
 
 def _cmd_judge(args, console: Console):
     """Score previously captured responses with Claude Code."""
+    _clear_and_banner(console)
     from crucible.judge import judge_results
 
     results_path = Path(args.results_file)
@@ -561,6 +595,7 @@ def _load_compare_data(files: list[str], console: Console) -> tuple[list[str], d
 
 def _cmd_compare(args, console: Console):
     """Side-by-side comparison of responses."""
+    _clear_and_banner(console)
     files = args.results_files
 
     # If no files given, auto-load all per-model DBs in results/
@@ -703,6 +738,7 @@ def _filter_report_models(raw: list[str], available: list[str], console: Console
 
 def _cmd_report(args, console: Console):
     """Generate a visual HTML report with charts."""
+    _clear_and_banner(console)
     from crucible.report import generate_html_report
 
     files = args.results_files
