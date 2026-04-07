@@ -382,7 +382,7 @@ def generate_html_report(
     models: list[str],
     lookup: dict[tuple[str, str], dict],
     output_path: Path,
-    title: str = "Crucible Benchmark Report",
+    title: str = "Crucible — LLM Benchmark for Structural Engineering Academics",
 ) -> Path:
     """Generate a self-contained HTML report with Chart.js visualisations.
 
@@ -709,7 +709,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
 </div>
 
 <footer>
-  Crucible &mdash; LLM benchmark for structural engineering &middot;
+  Crucible &mdash; LLM benchmark for structural engineering academics &middot;
   <a href="https://github.com/ccaprani/crucible">github.com/ccaprani/crucible</a>
 </footer>
 
@@ -777,6 +777,29 @@ new Chart(document.getElementById('radarChart'), {
   }
 });
 
+// Inline plugin: draw value labels to the right of horizontal bars
+const barLabelPlugin = {
+  id: 'barLabels',
+  afterDatasetsDraw(chart) {
+    const ctx = chart.ctx;
+    chart.data.datasets.forEach((ds, di) => {
+      const meta = chart.getDatasetMeta(di);
+      meta.data.forEach((bar, i) => {
+        const val = ds.data[i];
+        if (val == null) return;
+        const label = ds._labelFn ? ds._labelFn(val) : val;
+        ctx.save();
+        ctx.fillStyle = '#e8e8f0';
+        ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, bar.x + 8, bar.y);
+        ctx.restore();
+      });
+    });
+  }
+};
+
 // ── Pass rate bar chart ──
 new Chart(document.getElementById('passRateChart'), {
   type: 'bar',
@@ -788,11 +811,13 @@ new Chart(document.getElementById('passRateChart'), {
       borderColor: D.models.map(m => D.colours[m]),
       borderWidth: 1,
       borderRadius: 6,
+      _labelFn: v => (v * 100).toFixed(0) + '%',
     }]
   },
   options: {
     indexAxis: 'y',
     responsive: true,
+    layout: { padding: { right: 50 } },
     plugins: { legend: { display: false },
       tooltip: { callbacks: { label: ctx => (ctx.parsed.x * 100).toFixed(0) + '%' } }
     },
@@ -800,7 +825,8 @@ new Chart(document.getElementById('passRateChart'), {
       x: { min: 0, max: 1, ticks: { callback: v => (v * 100) + '%' } },
       y: { ticks: { font: { size: 12 } } }
     }
-  }
+  },
+  plugins: [barLabelPlugin]
 });
 
 // ── Performance chart ──
@@ -815,11 +841,13 @@ new Chart(document.getElementById('perfChart'), {
       borderColor: D.models.map(m => D.colours[m]),
       borderWidth: 1,
       borderRadius: 6,
+      _labelFn: v => v.toFixed(1) + ' tk/s',
     }]
   },
   options: {
     indexAxis: 'y',
     responsive: true,
+    layout: { padding: { right: 70 } },
     plugins: { legend: { display: false },
       tooltip: { callbacks: { label: ctx => ctx.parsed.x.toFixed(1) + ' tk/s' } }
     },
@@ -827,7 +855,8 @@ new Chart(document.getElementById('perfChart'), {
       x: { beginAtZero: true, title: { display: true, text: 'tokens / second' } },
       y: { ticks: { font: { size: 12 } } }
     }
-  }
+  },
+  plugins: [barLabelPlugin]
 });
 
 // ── Per-test grouped bar chart ──

@@ -679,7 +679,13 @@ def _cmd_report(args, console: Console):
     output_path = Path(args.output) if args.output else RESULTS_DIR / "report.html"
     path = generate_html_report(models, lookup, output_path, title=args.title)
     console.print(f"[bold green]Report generated:[/bold green] {path}")
-    console.print(f"[dim]Open in browser: file://{path.resolve()}[/dim]")
+
+    # Auto-open in browser unless --no-open
+    if not args.no_open:
+        import webbrowser
+        webbrowser.open(f"file://{path.resolve()}")
+    else:
+        console.print(f"[dim]Open in browser: file://{path.resolve()}[/dim]")
 
 
 # ── main ───────────────────────────────────────────────────────────────
@@ -687,7 +693,7 @@ def _cmd_report(args, console: Console):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Crucible — compare local Ollama models",
+        description="Crucible — LLM benchmark for structural engineering academics",
         prog="crucible",
     )
     subparsers = parser.add_subparsers(dest="command")
@@ -738,8 +744,10 @@ def main():
                           help="Result JSON files (default: all per-model files in results/)")
     report_p.add_argument("-o", "--output", default=None,
                           help="Output HTML path (default: results/report.html)")
-    report_p.add_argument("--title", default="Crucible Benchmark Report",
+    report_p.add_argument("--title", default="Crucible — LLM Benchmark for Structural Engineering Academics",
                           help="Report title")
+    report_p.add_argument("--no-open", action="store_true",
+                          help="Don't auto-open in browser")
 
     # If no subcommand given, default to `run` (supports bare `crucible -m 1 2`)
     known_commands = {"list", "run", "judge", "compare", "report"}
