@@ -9,7 +9,7 @@ from pathlib import Path
 
 import os
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.columns import Columns
 from rich.live import Live
 from rich.panel import Panel
@@ -26,7 +26,8 @@ def _clear_and_banner(console: Console):
     if sys.stdout.isatty():
         os.system("clear" if os.name != "nt" else "cls")
     console.print(_BANNER)
-    console.print("[dim]LLM benchmark for structural engineering academics[/dim]\n")
+    console.print("[dim]LLM benchmark for structural engineering academics[/dim]")
+    console.print("[dim]Colin Caprani · Monash University · github.com/ccaprani/crucible[/dim]\n")
 
 from crucible.models import list_available_models
 from crucible.report import (
@@ -358,8 +359,20 @@ def _cmd_run(args, console: Console):
     current_tokens = 0
     current_elapsed = 0.0
     completed_results: list[str] = []
+    stream_text: list[str] = []  # accumulated response text for live panel
 
-    def build_progress_table() -> Table:
+    def _stream_panel_height() -> int:
+        """Remaining terminal lines after everything above the panel."""
+        # Banner: 3 (ASCII art) + 1 (tagline) + 1 (authorship) + 1 (blank) = 6
+        # Run header: "Running N tests..." + "Timeout..." + blank = 3
+        # Progress table: up to 4 status rows + up to 5 completed results
+        banner_rows = 6
+        header_rows = 3
+        progress_rows = 4 + min(len(completed_results), 5)
+        used = banner_rows + header_rows + progress_rows
+        return max(6, (console.height or 40) - used - 2)
+
+    def build_display() -> Group:
         elapsed_total = time.perf_counter() - run_start
         table = Table(show_header=False, box=None, padding=(0, 1))
         table.add_column("label", style="dim", width=12)
@@ -379,7 +392,6 @@ def _cmd_run(args, console: Console):
                 f"[cyan]{current_model}[/cyan] / [white]{current_test}[/white]"
             )
             if current_tokens < 0:
-                # Negative means thinking tokens (from thinking models)
                 table.add_row(
                     "Thinking",
                     f"[dim]{-current_tokens} tokens ({_format_time(current_elapsed)})[/dim]"
@@ -391,20 +403,51 @@ def _cmd_run(args, console: Console):
                 )
         for line in completed_results[-5:]:
             table.add_row("", line)
-        return table
 
-    def on_token(model, test_name, token_count, elapsed):
+        # Live response panel — fill remaining screen
+        if current_model and stream_text:
+            panel_h = _stream_panel_height()
+            # Join all text, take last N lines that fit
+            full = "".join(stream_text)
+            lines = full.split("\n")
+            visible = lines[-(panel_h):] if len(lines) > panel_h else lines
+            panel_text = "\n".join(visible)
+
+            is_thinking = current_tokens < 0
+            panel_title = (
+                f"[bold]{'💭 Thinking' if is_thinking else '💬 Response'}[/bold]  "
+                f"[dim]{current_model} / {current_test}[/dim]"
+            )
+            panel = Panel(
+                Text(panel_text, style="italic dim" if is_thinking else ""),
+                title=panel_title,
+                title_align="left",
+                border_style="red",
+                height=panel_h + 2,  # +2 for border
+                width=min(console.width, 120),
+            )
+            return Group(table, panel)
+
+        return Group(table)
+
+    def on_token(model, test_name, token_count, elapsed, text=""):
         nonlocal current_model, current_test, current_tokens, current_elapsed
         current_model = model
         current_test = test_name
         current_tokens = token_count  # negative = thinking tokens
         current_elapsed = elapsed
-        live.update(build_progress_table())
+        # Strip the ⟨think⟩ prefix for display
+        if text.startswith("⟨think⟩"):
+            stream_text.append(text[7:])
+        else:
+            stream_text.append(text)
+        live.update(build_display())
 
     def on_result(model, test_name, result):
         nonlocal completed, current_model
         completed += 1
         current_model = ""
+        stream_text.clear()  # clear live response panel
 
         # Incremental save — never lose completed work
         if not args.no_save:
@@ -440,16 +483,17 @@ def _cmd_run(args, console: Console):
                 reason = reason[:57] + "..."
             line = f"[red]✗[/red]  {model} / {test_name} — {score:.0%} [dim]{reason}[/dim] ({time_info})"
         completed_results.append(line)
-        live.update(build_progress_table())
+        live.update(build_display())
 
     def on_skip(model, test_name, result):
         nonlocal completed, current_model
         completed += 1
         current_model = ""
+        stream_text.clear()
         score = result.eval_result.score
         line = f"[blue]♻[/blue]  {model} / {test_name} — reused {score:.0%}"
         completed_results.append(line)
-        live.update(build_progress_table())
+        live.update(build_display())
 
     console.print(
         f"\n[bold]Running {len(tests)} tests x {len(models)} models "
@@ -461,7 +505,7 @@ def _cmd_run(args, console: Console):
         f"{token_info}/test[/dim]\n"
     )
 
-    with Live(build_progress_table(), console=console, refresh_per_second=2) as live:
+    with Live(build_display(), console=console, refresh_per_second=4) as live:
         results = run_tests(
             models, tests,
             on_result=on_result,
@@ -826,7 +870,7 @@ def main():
     run_p.add_argument("--no-save", action="store_true")
     run_p.add_argument("--interactive", "-i", action="store_true")
     run_p.add_argument("--timeout", type=float, default=600.0,
-                       help="Max seconds per test (default: 600, overridden by per-test timeout in YAML)")
+                       help="Max seconds per test — caps per-test YAML timeouts (default: 600)")
     run_p.add_argument("--tokens", type=int, default=0, dest="max_tokens",
                        help="Max completion tokens (0 = unlimited, default)")
     run_p.add_argument("--verbose", "-v", action="store_true",

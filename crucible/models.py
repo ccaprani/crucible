@@ -122,7 +122,7 @@ def run_prompt(
     temperature: float = 0.0,
     max_tokens: int = 2048,
     timeout: float = 300.0,
-    on_token: Callable[[int, float], None] | None = None,
+    on_token: Callable[[int, float, str], None] | None = None,
 ) -> ModelResponse:
     """Send a prompt to an Ollama model and collect response with timing.
 
@@ -133,8 +133,9 @@ def run_prompt(
         temperature: Sampling temperature (0.0 for reproducibility).
         max_tokens: Maximum completion tokens (default 2048).
         timeout: Max wall-clock seconds per test (default 300 = 5 min).
-        on_token: Callback(token_count, elapsed_seconds) called on each chunk
-                  for live progress display.
+        on_token: Callback(token_count, elapsed_seconds, text_chunk) called on
+                  each chunk for live progress display.  text_chunk is the new
+                  content fragment (or thinking fragment prefixed with "⟨think⟩").
     """
     messages = []
     if system:
@@ -187,11 +188,11 @@ def run_prompt(
             if ttft_content is None:
                 ttft_content = elapsed
             if on_token:
-                on_token(token_count, elapsed)
+                on_token(token_count, elapsed, content)
 
         # For thinking models, report thinking progress too
         if not content and thinking and on_token:
-            on_token(-(thinking_token_count), elapsed)
+            on_token(-(thinking_token_count), elapsed, f"⟨think⟩{thinking}")
 
         # Timeout check
         if elapsed > timeout:

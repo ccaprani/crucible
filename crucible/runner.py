@@ -126,11 +126,13 @@ def run_tests(
             # Build a token callback that includes test context
             token_cb = None
             if on_token:
-                def token_cb(count, elapsed, _m=model, _t=test.name):
-                    on_token(_m, _t, count, elapsed)
+                def token_cb(count, elapsed, text="", _m=model, _t=test.name):
+                    on_token(_m, _t, count, elapsed, text)
 
-            # Per-test timeout overrides global default
+            # Per-test timeout from YAML, but CLI --timeout acts as a cap
             effective_timeout = test.timeout if test.timeout > 0 else timeout
+            if timeout > 0:
+                effective_timeout = min(effective_timeout, timeout)
 
             response = run_prompt(
                 model=model,

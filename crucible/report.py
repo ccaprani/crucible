@@ -798,8 +798,9 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
 
 <header>
   <h1>{{TITLE}}</h1>
-  <p class="subtitle">Generated {{TIMESTAMP}} &middot; {{N_MODELS}} models &middot; {{N_TESTS}} tests</p>
-  <p class="subtitle" style="margin-top:4px">{{HARDWARE}}</p>
+  <p class="subtitle">Colin Caprani &middot; Monash University</p>
+  <p class="subtitle" style="margin-top:6px">Generated {{TIMESTAMP}} &middot; {{N_MODELS}} models &middot; {{N_TESTS}} tests</p>
+  <p class="subtitle" style="margin-top:2px">{{HARDWARE}}</p>
 </header>
 
 <div class="filter-bar" id="filterBar">
@@ -843,7 +844,8 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
 </div>
 
 <footer>
-  Crucible &mdash; LLM benchmark for structural engineering academics &middot;
+  Crucible &mdash; LLM benchmark for structural engineering academics<br>
+  Colin Caprani &middot; Monash University &middot;
   <a href="https://github.com/ccaprani/crucible">github.com/ccaprani/crucible</a>
 </footer>
 
