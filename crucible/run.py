@@ -204,24 +204,28 @@ def _cmd_list(args, console: Console):
             except Exception:
                 infos.append(None)
 
+        _TIER_COLOURS = {"8GB": "green", "16GB": "yellow", "24GB": "red"}
+
         table = Table(
             show_header=False, box=None, padding=(0, 1),
             title=f"Ollama models ({len(available_no_embed)})",
             title_style="bold", title_justify="left",
         )
         table.add_column("#", style="cyan", justify="right", width=3)
-        table.add_column("Model", style="white")
-        table.add_column("Params", style="dim", justify="right")
+        table.add_column("Model", style="bold white")
+        table.add_column("Params", style="magenta", justify="right")
         table.add_column("Quant", style="dim")
         table.add_column("VRAM", style="dim", justify="right")
-        table.add_column("Tier", style="dim")
+        table.add_column("Tier", justify="center")
 
         for i, (name, mi) in enumerate(zip(available_no_embed, infos), 1):
             if mi:
+                tc = _TIER_COLOURS.get(mi.vram_tier, "dim")
                 table.add_row(
                     str(i), name,
                     mi.parameter_size, mi.quantization,
-                    f"~{mi.vram_gb:.1f}GB", mi.vram_tier,
+                    f"~{mi.vram_gb:.1f}GB",
+                    f"[{tc}]{mi.vram_tier}[/{tc}]",
                 )
             else:
                 table.add_row(str(i), name, "", "", "", "")
