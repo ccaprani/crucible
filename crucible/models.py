@@ -30,6 +30,72 @@ def list_available_models() -> list[str]:
     return sorted(m.model for m in models.models)
 
 
+@dataclass
+class ModelInfo:
+    """Metadata about a model from Ollama."""
+    name: str
+    parameter_size: str  # e.g. "31.3B"
+    quantization: str    # e.g. "Q4_K_M"
+    family: str          # e.g. "gemma4"
+    vram_gb: float       # estimated VRAM in GB
+    vram_tier: str       # "8GB", "16GB", or "24GB"
+
+
+def get_model_info(model: str) -> ModelInfo:
+    """Fetch model metadata from Ollama and estimate VRAM tier.
+
+    VRAM estimate = weight_size + overhead.
+    Weight size uses bits-per-param for common quantisations.
+    Overhead (~1.5-2 GB) covers KV cache at default context (2048),
+    CUDA kernels, and runtime buffers.  Long-context workloads will
+    use more, but tier assignment assumes typical benchmarking context.
+    """
+    info = ollama.show(model)
+    details = info.get("details", {}) if isinstance(info, dict) else getattr(info, "details", None)
+    if details and not isinstance(details, dict):
+        # Pydantic model — grab attributes
+        params = getattr(details, "parameter_size", "?")
+        quant = getattr(details, "quantization_level", "?")
+        family = getattr(details, "family", "?")
+    elif isinstance(details, dict):
+        params = details.get("parameter_size", "?")
+        quant = details.get("quantization_level", "?")
+        family = details.get("family", "?")
+    else:
+        params, quant, family = "?", "?", "?"
+
+    # Bits per param for common quantisations
+    _QUANT_BPP = {
+        "Q4_0": 4.5, "Q4_1": 5.0, "Q4_K_S": 4.5, "Q4_K_M": 4.8,
+        "Q5_0": 5.5, "Q5_1": 6.0, "Q5_K_S": 5.5, "Q5_K_M": 5.7,
+        "Q6_K": 6.6, "Q8_0": 8.5, "F16": 16.0,
+    }
+    bpp = _QUANT_BPP.get(quant, 4.8)  # default to Q4_K_M
+
+    try:
+        param_b = float(params.replace("B", ""))
+        weight_gb = param_b * bpp / 8  # bits → bytes → GB
+        vram = weight_gb + 2.0  # runtime overhead
+    except (ValueError, AttributeError):
+        vram = 0.0
+
+    if vram > 16:
+        tier = "24GB"
+    elif vram > 8:
+        tier = "16GB"
+    else:
+        tier = "8GB"
+
+    return ModelInfo(
+        name=model,
+        parameter_size=params,
+        quantization=quant,
+        family=family,
+        vram_gb=round(vram, 1),
+        vram_tier=tier,
+    )
+
+
 def _is_thinking_model(model: str) -> bool:
     """Detect models that use internal chain-of-thought reasoning.
 

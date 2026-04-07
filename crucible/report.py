@@ -382,7 +382,8 @@ def generate_html_report(
     models: list[str],
     lookup: dict[tuple[str, str], dict],
     output_path: Path,
-    title: str = "Crucible — LLM Benchmark for Structural Engineering Academics",
+    title: str = "Crucible Benchmark Report",
+    model_infos: dict | None = None,
 ) -> Path:
     """Generate a self-contained HTML report with Chart.js visualisations.
 
@@ -391,9 +392,12 @@ def generate_html_report(
         lookup: mapping (model, test_name) → result dict
         output_path: where to write the HTML file
         title: report title
+        model_infos: optional dict of model_name → ModelInfo with params/quant/tier
     Returns:
         The output path
     """
+    if model_infos is None:
+        model_infos = {}
     # ── Gather all tests and categories ──
     all_tests: dict[str, str] = {}  # test_name → category
     for (model, test_name), entry in lookup.items():
@@ -480,6 +484,13 @@ def generate_html_report(
         "perfTtft": perf_ttft,
         "summary": summary,
         "colours": model_colours,
+        "modelMeta": {m: {
+            "params": mi.parameter_size,
+            "quant": mi.quantization,
+            "family": mi.family,
+            "vram_gb": mi.vram_gb,
+            "tier": mi.vram_tier,
+        } for m, mi in model_infos.items()},
         "lookup": {f"{m}|{t}": {
             "score": e["score"],
             "passed": e.get("passed", False),
@@ -650,6 +661,16 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   }
   .badge-pass { background: rgba(76, 175, 80, 0.15); color: var(--green); }
   .badge-fail { background: rgba(239, 83, 80, 0.15); color: var(--red); }
+  .badge-tier {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    background: rgba(77, 201, 246, 0.12);
+    color: var(--accent);
+    letter-spacing: 0.3px;
+  }
   footer {
     text-align: center;
     color: var(--text-dim);
@@ -728,9 +749,15 @@ D.models.forEach(m => {
   if (!s) return;
   const col = D.colours[m];
   const pct = Math.round(s.passed / s.tests * 100);
+  const meta = D.modelMeta[m];
+  const metaLine = meta
+    ? `<div class="stat">${meta.params} &middot; ${meta.quant} &middot; ~${meta.vram_gb}GB</div>
+       <div class="stat badge-tier" style="margin-top:4px">${meta.tier} VRAM tier</div>`
+    : '';
   cardsEl.innerHTML += `
     <div class="model-card" style="border-top-color:${col}">
       <div class="name">${m}</div>
+      ${metaLine}
       <div class="big" style="color:${col}">${pct}%</div>
       <div class="stat">pass rate (${s.passed}/${s.tests})</div>
       <div class="stat">avg score: ${(s.avg_score * 100).toFixed(0)}%</div>

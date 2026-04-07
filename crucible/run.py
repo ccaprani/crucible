@@ -177,11 +177,17 @@ def _cmd_list(args, console: Console):
     what = getattr(args, "what", "all")
 
     if what in ("all", "models"):
+        from crucible.models import get_model_info
         available = list_available_models()
         available_no_embed = [m for m in available if "embed" not in m.lower()]
         console.print(f"\n[bold]Ollama models ({len(available_no_embed)}):[/bold]")
         for i, name in enumerate(available_no_embed, 1):
-            console.print(f"  [cyan]{i:2d}[/cyan]  {name}")
+            try:
+                mi = get_model_info(name)
+                meta = f"[dim]{mi.parameter_size} · {mi.quantization} · ~{mi.vram_gb}GB · {mi.vram_tier}[/dim]"
+            except Exception:
+                meta = ""
+            console.print(f"  [cyan]{i:2d}[/cyan]  {name}  {meta}")
 
     if what in ("all", "tests"):
         tests = load_tests(TESTS_DIR)
@@ -658,6 +664,38 @@ def _cmd_compare(args, console: Console):
 # ── crucible report ────────────────────────────────────────────────────
 
 
+def _filter_report_models(raw: list[str], available: list[str], console: Console) -> list[str]:
+    """Resolve model references against loaded result models (not Ollama)."""
+    resolved = []
+    for token in raw:
+        if token.isdigit():
+            idx = int(token) - 1
+            if 0 <= idx < len(available):
+                resolved.append(available[idx])
+            else:
+                console.print(f"[yellow]Invalid index {token} (max {len(available)})[/yellow]")
+        elif token in available:
+            resolved.append(token)
+        else:
+            matches = [m for m in available if token.lower() in m.lower()]
+            if len(matches) == 1:
+                resolved.append(matches[0])
+            elif len(matches) > 1:
+                console.print(f"[yellow]'{token}' matches multiple: {', '.join(matches)}[/yellow]")
+            else:
+                console.print(f"[red]No results for model: {token}[/red]")
+
+    if not resolved:
+        console.print("[red]No valid models resolved.[/red]")
+        console.print("[dim]Available models in results:[/dim]")
+        for i, name in enumerate(available, 1):
+            console.print(f"  [cyan]{i:2d}[/cyan]  {name}")
+        sys.exit(1)
+
+    seen = set()
+    return [m for m in resolved if m not in seen and not seen.add(m)]
+
+
 def _cmd_report(args, console: Console):
     """Generate a visual HTML report with charts."""
     from crucible.report import generate_html_report
@@ -670,14 +708,35 @@ def _cmd_report(args, console: Console):
             console.print("[red]No result files found in results/[/red]")
             sys.exit(1)
 
-    models, lookup = _load_compare_data(files, console)
+    all_models, lookup = _load_compare_data(files, console)
 
-    if not models:
+    if not all_models:
         console.print("[red]No model data found.[/red]")
         sys.exit(1)
 
+    # Filter models if -m specified
+    if args.models:
+        models = _filter_report_models(args.models, all_models, console)
+        # Prune lookup to only selected models
+        lookup = {k: v for k, v in lookup.items() if k[0] in models}
+    else:
+        models = all_models
+
+    # Fetch model metadata from Ollama (if available)
+    model_infos = {}
+    try:
+        from crucible.models import get_model_info
+        for m in models:
+            try:
+                model_infos[m] = get_model_info(m)
+            except Exception:
+                pass  # Model not in Ollama — skip metadata
+    except Exception:
+        pass
+
     output_path = Path(args.output) if args.output else RESULTS_DIR / "report.html"
-    path = generate_html_report(models, lookup, output_path, title=args.title)
+    path = generate_html_report(models, lookup, output_path, title=args.title,
+                                model_infos=model_infos)
     console.print(f"[bold green]Report generated:[/bold green] {path}")
 
     # Auto-open in browser unless --no-open
@@ -742,9 +801,11 @@ def main():
     report_p = subparsers.add_parser("report", help="Generate HTML visual report")
     report_p.add_argument("results_files", nargs="*",
                           help="Result JSON files (default: all per-model files in results/)")
+    report_p.add_argument("-m", "--models", nargs="+",
+                          help="Models to include (number, name, or substring — default: all)")
     report_p.add_argument("-o", "--output", default=None,
                           help="Output HTML path (default: results/report.html)")
-    report_p.add_argument("--title", default="Crucible — LLM Benchmark for Structural Engineering Academics",
+    report_p.add_argument("--title", default="Crucible Benchmark Report",
                           help="Report title")
     report_p.add_argument("--no-open", action="store_true",
                           help="Don't auto-open in browser")
