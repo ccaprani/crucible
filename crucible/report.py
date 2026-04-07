@@ -74,6 +74,9 @@ def save_model_results(
         except (json.JSONDecodeError, KeyError, OSError):
             pass
 
+    # Detect hardware (cached after first call)
+    hw = _get_hardware()
+
     # Update with new results
     for r in results:
         entry = {
@@ -99,9 +102,6 @@ def save_model_results(
         if r.reused:
             entry["reused"] = True
         existing[r.test.name] = entry
-
-    # Detect hardware (cached after first call)
-    hw = _get_hardware()
 
     # Write back
     out = {
