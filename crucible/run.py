@@ -196,7 +196,7 @@ def _cmd_list(args, console: Console):
         available = list_available_models()
         available_no_embed = [m for m in available if "embed" not in m.lower()]
 
-        # Gather metadata for alignment
+        # Gather metadata
         infos = []
         for name in available_no_embed:
             try:
@@ -204,22 +204,30 @@ def _cmd_list(args, console: Console):
             except Exception:
                 infos.append(None)
 
-        name_w = max(len(n) for n in available_no_embed)
-        param_w = max((len(mi.parameter_size) for mi in infos if mi), default=0)
-        quant_w = max((len(mi.quantization) for mi in infos if mi), default=0)
+        table = Table(
+            show_header=False, box=None, padding=(0, 1),
+            title=f"Ollama models ({len(available_no_embed)})",
+            title_style="bold", title_justify="left",
+        )
+        table.add_column("#", style="cyan", justify="right", width=3)
+        table.add_column("Model", style="white")
+        table.add_column("Params", style="dim", justify="right")
+        table.add_column("Quant", style="dim")
+        table.add_column("VRAM", style="dim", justify="right")
+        table.add_column("Tier", style="dim")
 
-        console.print(f"\n[bold]Ollama models ({len(available_no_embed)}):[/bold]")
         for i, (name, mi) in enumerate(zip(available_no_embed, infos), 1):
             if mi:
-                meta = (
-                    f"[dim]{mi.parameter_size:>{param_w}}  "
-                    f"{mi.quantization:<{quant_w}}  "
-                    f"~{mi.vram_gb:>5.1f}GB  "
-                    f"{mi.vram_tier}[/dim]"
+                table.add_row(
+                    str(i), name,
+                    mi.parameter_size, mi.quantization,
+                    f"~{mi.vram_gb:.1f}GB", mi.vram_tier,
                 )
             else:
-                meta = ""
-            console.print(f"  [cyan]{i:2d}[/cyan]  {name:<{name_w}}  {meta}")
+                table.add_row(str(i), name, "", "", "", "")
+
+        console.print()
+        console.print(table)
 
     if what in ("all", "tests"):
         tests = load_tests(TESTS_DIR)
