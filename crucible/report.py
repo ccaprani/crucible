@@ -11,6 +11,20 @@ from rich.text import Text
 
 from .runner import TestResult
 
+_hw_cache: dict | None = None
+
+
+def _get_hardware() -> dict:
+    """Get hardware info dict, cached after first call."""
+    global _hw_cache
+    if _hw_cache is None:
+        try:
+            from .hardware import detect_hardware
+            _hw_cache = detect_hardware().to_dict()
+        except Exception:
+            _hw_cache = {}
+    return _hw_cache
+
 
 def _prompt_hash(prompt: str) -> str:
     """Short hash of a prompt for staleness detection."""
@@ -78,6 +92,7 @@ def save_model_results(
             "tokens_per_sec": round(r.model_response.completion_tokens / r.model_response.total_time, 1) if r.model_response.total_time > 0 else 0,
             "response": r.model_response.response,
             "timestamp": datetime.now().isoformat(),
+            "hardware": hw.get("gpu", "unknown"),
         }
         if r.model_response.thinking_tokens:
             entry["thinking_tokens"] = r.model_response.thinking_tokens
@@ -85,10 +100,14 @@ def save_model_results(
             entry["reused"] = True
         existing[r.test.name] = entry
 
+    # Detect hardware (cached after first call)
+    hw = _get_hardware()
+
     # Write back
     out = {
         "model": model,
         "updated": datetime.now().isoformat(),
+        "hardware": hw,
         "results": list(existing.values()),
     }
     with open(path, "w") as f:
@@ -505,10 +524,27 @@ def generate_html_report(
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
 
+    # Hardware summary from current machine
+    hw = _get_hardware()
+    hw_str = ""
+    if hw:
+        parts = []
+        if hw.get("gpu"):
+            g = hw["gpu"]
+            if hw.get("gpu_vram_gb"):
+                g += f" ({hw['gpu_vram_gb']:.0f}GB)"
+            parts.append(g)
+        if hw.get("cpu"):
+            parts.append(hw["cpu"])
+        if hw.get("ram_gb"):
+            parts.append(f"{hw['ram_gb']}GB RAM")
+        hw_str = " &middot; ".join(parts)
+
     html = _HTML_TEMPLATE.replace("{{TITLE}}", title)
     html = html.replace("{{TIMESTAMP}}", timestamp)
     html = html.replace("{{N_MODELS}}", str(len(models)))
     html = html.replace("{{N_TESTS}}", str(len(test_names)))
+    html = html.replace("{{HARDWARE}}", hw_str)
     html = html.replace("{{CHART_DATA}}", chart_data)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -763,6 +799,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
 <header>
   <h1>{{TITLE}}</h1>
   <p class="subtitle">Generated {{TIMESTAMP}} &middot; {{N_MODELS}} models &middot; {{N_TESTS}} tests</p>
+  <p class="subtitle" style="margin-top:4px">{{HARDWARE}}</p>
 </header>
 
 <div class="filter-bar" id="filterBar">
