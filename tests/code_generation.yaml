@@ -4,6 +4,7 @@ description: Scientific Python development, engineering code, package maintenanc
 tests:
   - name: section_properties
     description: Compute polygon section properties using numpy
+    timeout: 900  # heavy: 522s observed
     prompt: |
       Write a Python function using numpy to compute the geometric section properties
       of an arbitrary polygon given vertex coordinate arrays x and y (as numpy arrays,
@@ -29,6 +30,7 @@ tests:
 
   - name: reliability_pf
     description: Compute probability of failure using scipy
+    timeout: 420  # medium: 207s observed
     prompt: |
       Write a Python script using scipy to compute the probability of structural failure
       for the limit state function g(R,S) = R - S, where:
@@ -54,6 +56,7 @@ tests:
 
   - name: numpy_vectorisation
     description: Refactor loop-based code to vectorised numpy
+    timeout: 300  # medium: 156s observed
     prompt: |
       Refactor the following loop-based Python function to use vectorised numpy operations
       (no Python loops). The function computes the bending moment diagram for a simply
@@ -97,6 +100,7 @@ tests:
 
   - name: pytest_suite
     description: Write pytest tests for beam moment function
+    timeout: 420  # medium: 212s observed
     prompt: |
       Write a pytest test suite for the function below. Do NOT include the function
       itself — just the tests. Assume it can be imported as `from beam import bmd`.

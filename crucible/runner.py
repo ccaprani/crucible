@@ -20,6 +20,7 @@ class TestCase:
     prompt: str
     eval_type: str
     eval_config: dict = field(default_factory=dict)
+    timeout: float = 0  # per-test timeout in seconds (0 = use global default)
 
 
 @dataclass
@@ -29,6 +30,7 @@ class TestResult:
     test: TestCase
     model_response: ModelResponse
     eval_result: EvalResult
+    reused: bool = False
 
 
 def load_tests(test_dir: Path, categories: list[str] | None = None) -> list[TestCase]:
@@ -54,10 +56,38 @@ def load_tests(test_dir: Path, categories: list[str] | None = None) -> list[Test
                     prompt=test_data["prompt"],
                     eval_type=test_data.get("eval_type", "manual"),
                     eval_config=test_data.get("eval_config", {}),
+                    timeout=test_data.get("timeout", 0),
                 )
             )
 
     return tests
+
+
+def _rebuild_test_result(test: TestCase, prev: dict, model: str) -> TestResult:
+    """Reconstruct a TestResult from a cached JSON result entry."""
+    model_response = ModelResponse(
+        model=model,
+        prompt=prev.get("prompt", test.prompt),
+        response=prev.get("response", ""),
+        time_to_first_token=prev.get("ttft", 0.0),
+        total_time=prev.get("total_time", 0.0),
+        prompt_tokens=prev.get("prompt_tokens", 0),
+        completion_tokens=prev.get("completion_tokens", 0),
+        total_tokens=prev.get("prompt_tokens", 0) + prev.get("completion_tokens", 0),
+        timed_out=False,
+        thinking_tokens=prev.get("thinking_tokens", 0),
+    )
+    eval_result = EvalResult(
+        score=prev.get("score", 0.0),
+        passed=prev.get("passed", False),
+        details=prev.get("eval_details", ""),
+    )
+    return TestResult(
+        test=test,
+        model_response=model_response,
+        eval_result=eval_result,
+        reused=True,
+    )
 
 
 def run_tests(
@@ -67,6 +97,8 @@ def run_tests(
     on_token: Callable[[str, str, int, float], None] | None = None,
     max_tokens: int = 2048,
     timeout: float = 300.0,
+    previous_results: dict[tuple[str, str], dict] | None = None,
+    on_skip: Callable | None = None,
 ) -> dict[str, list[TestResult]]:
     """Run all tests against all models.
 
@@ -82,17 +114,29 @@ def run_tests(
 
     for test in tests:
         for model in models:
+            # Reuse previous passing result if available
+            if previous_results and (model, test.name) in previous_results:
+                prev = previous_results[(model, test.name)]
+                result = _rebuild_test_result(test, prev, model)
+                results[model].append(result)
+                if on_skip:
+                    on_skip(model, test.name, result)
+                continue
+
             # Build a token callback that includes test context
             token_cb = None
             if on_token:
                 def token_cb(count, elapsed, _m=model, _t=test.name):
                     on_token(_m, _t, count, elapsed)
 
+            # Per-test timeout overrides global default
+            effective_timeout = test.timeout if test.timeout > 0 else timeout
+
             response = run_prompt(
                 model=model,
                 prompt=test.prompt,
                 max_tokens=max_tokens,
-                timeout=timeout,
+                timeout=effective_timeout,
                 on_token=token_cb,
             )
 
@@ -100,7 +144,7 @@ def run_tests(
             if response.timed_out:
                 eval_result = EvalResult(
                     0.0, False,
-                    f"Timed out after {timeout:.0f}s ({response.completion_tokens} tokens generated)",
+                    f"Timed out after {effective_timeout:.0f}s ({response.completion_tokens} tokens generated)",
                 )
             else:
                 eval_result = evaluate(

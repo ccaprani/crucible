@@ -4,6 +4,7 @@ description: Multi-step engineering calculations, probability, practical problem
 tests:
   - name: beam_design_as3600
     description: Simply supported beam design to AS 3600
+    timeout: 900  # heavy: 568s observed
     prompt: |
       Design problem (AS 3600):
 
@@ -36,6 +37,7 @@ tests:
 
   - name: load_combination_stats
     description: Statistical combination of random loads
+    timeout: 300  # medium: 161s observed
     prompt: |
       A structural member is subjected to two independent random loads:
       - Permanent load G ~ Normal(mean=50, std=5) kN
@@ -58,6 +60,7 @@ tests:
 
   - name: dependency_resolution
     description: Python package dependency constraint reasoning
+    timeout: 360  # medium: 180s observed
     prompt: |
       A Python package has the following dependency constraints:
       - Package A: >=1.0, <2.0
@@ -83,6 +86,7 @@ tests:
 
   - name: supervision_triage
     description: PhD student supervision time allocation
+    timeout: 600  # heavy: qwen3.5 timed out at 300s
     prompt: |
       You are supervising 4 PhD students and have 8 hours available this week for
       supervision activities. Allocate your time and justify your decisions.

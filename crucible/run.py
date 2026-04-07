@@ -15,7 +15,10 @@ from rich.prompt import Prompt
 from rich.table import Table
 
 from crucible.models import list_available_models
-from crucible.report import print_summary, save_results
+from crucible.report import (
+    load_model_results, load_previous_results,
+    print_summary, save_markdown, save_results,
+)
 from crucible.runner import load_tests, run_tests
 
 _PKG_ROOT = Path(__file__).resolve().parent.parent
@@ -190,23 +193,54 @@ def _cmd_list(args, console: Console):
                 console.print(f"\n  [bold cyan]{current_cat}[/bold cyan]")
             console.print(f"    {t.name}: {t.description} [dim][{t.eval_type}][/dim]")
 
+    if what == "prompts":
+        tests = load_tests(TESTS_DIR)
+        console.print(f"\n[bold]Test prompts ({len(tests)}):[/bold]")
+        for t in tests:
+            console.print(Panel(
+                t.prompt.strip(),
+                title=f"[bold]{t.category}[/bold] / {t.name}",
+                subtitle=f"[dim]{t.description}  [{t.eval_type}][/dim]",
+                title_align="left",
+                subtitle_align="left",
+                border_style="cyan",
+                width=min(console.width, 120),
+            ))
+            console.print()
+
     if what in ("all", "results"):
-        result_files = sorted(RESULTS_DIR.glob("*.json"), reverse=True)
-        console.print(f"\n[bold]Results ({len(result_files)}):[/bold]")
-        if not result_files:
+        # Show per-model result databases
+        model_files = sorted(
+            f for f in RESULTS_DIR.glob("*.json")
+            if not f.stem[0].isdigit() and "_judged" not in f.stem
+        )
+        legacy_files = sorted(
+            (f for f in RESULTS_DIR.glob("*.json") if f.stem[0].isdigit()),
+            reverse=True,
+        )
+
+        console.print(f"\n[bold]Model results ({len(model_files)}):[/bold]")
+        if not model_files:
             console.print("  [dim]No results yet.[/dim]")
-        for f in result_files[:10]:
-            # Peek inside for model names
+        for f in model_files:
             try:
                 with open(f) as fh:
                     data = json.load(fh)
-                models = list(data.get("models", {}).keys())
-                n_tests = len(next(iter(data["models"].values()), []))
-                label = f"{', '.join(models)} ({n_tests} tests)"
+                model = data.get("model", f.stem)
+                n_tests = len(data.get("results", []))
+                n_pass = sum(1 for r in data.get("results", []) if r.get("passed"))
+                updated = data.get("updated", "")[:16]
+                console.print(
+                    f"  [cyan]{model}[/cyan]  {n_pass}/{n_tests} passing  "
+                    f"[dim]{f.name}  updated {updated}[/dim]"
+                )
             except Exception:
-                label = ""
-            suffix = " [dim](judged)[/dim]" if "_judged" in f.stem else ""
-            console.print(f"  {f.name}{suffix}  [dim]{label}[/dim]")
+                console.print(f"  {f.name}")
+
+        if legacy_files:
+            console.print(f"\n  [dim]Legacy run files ({len(legacy_files)}):[/dim]")
+            for f in legacy_files[:5]:
+                console.print(f"    [dim]{f.name}[/dim]")
 
     console.print()
 
@@ -242,6 +276,14 @@ def _cmd_run(args, console: Console):
         console.print("[red]No tests matched.[/red]")
         sys.exit(1)
 
+    # Load previous passing results (unless --fresh)
+    # Checks prompt hashes — edited questions are automatically re-run
+    previous_results: dict[tuple[str, str], dict] = {}
+    if not args.fresh:
+        previous_results = load_previous_results(RESULTS_DIR, models, tests)
+
+    skip_count = len(previous_results)
+
     # Count llm_judge tests that will be deferred
     judge_count = sum(1 for t in tests if t.eval_type == "llm_judge")
     if judge_count:
@@ -251,6 +293,12 @@ def _cmd_run(args, console: Console):
         )
 
     total = len(tests) * len(models)
+    fresh_count = total - skip_count
+    if skip_count:
+        console.print(
+            f"[dim]♻ {skip_count} previously passing — will reuse "
+            f"({fresh_count} to run)[/dim]"
+        )
     completed = 0
     run_start = time.perf_counter()
 
@@ -279,10 +327,17 @@ def _cmd_run(args, console: Console):
                 "Running",
                 f"[cyan]{current_model}[/cyan] / [white]{current_test}[/white]"
             )
-            table.add_row(
-                "Generating",
-                f"{current_tokens} tokens ({_format_time(current_elapsed)})"
-            )
+            if current_tokens < 0:
+                # Negative means thinking tokens (from thinking models)
+                table.add_row(
+                    "Thinking",
+                    f"[dim]{-current_tokens} tokens ({_format_time(current_elapsed)})[/dim]"
+                )
+            else:
+                table.add_row(
+                    "Generating",
+                    f"{current_tokens} tokens ({_format_time(current_elapsed)})"
+                )
         for line in completed_results[-5:]:
             table.add_row("", line)
         return table
@@ -291,7 +346,7 @@ def _cmd_run(args, console: Console):
         nonlocal current_model, current_test, current_tokens, current_elapsed
         current_model = model
         current_test = test_name
-        current_tokens = token_count
+        current_tokens = token_count  # negative = thinking tokens
         current_elapsed = elapsed
         live.update(build_progress_table())
 
@@ -304,17 +359,39 @@ def _cmd_run(args, console: Console):
         passed = result.eval_result.passed
         timed_out = result.model_response.timed_out
         is_deferred = result.test.eval_type == "llm_judge" and score == 0.5
+        empty_response = not result.model_response.response.strip()
+        thinking_tokens = result.model_response.thinking_tokens
+
+        # Build timing info — include thinking tokens if present
+        time_info = _format_time(t)
+        if thinking_tokens:
+            time_info += f", {thinking_tokens} thinking tokens"
 
         if timed_out:
-            line = f"[red]⏱ [/red] {model} / {test_name} — timeout ({_format_time(t)})"
+            line = f"[red]⏱ [/red] {model} / {test_name} — timeout ({time_info})"
+        elif empty_response:
+            line = f"[red]✗[/red]  {model} / {test_name} — [red]empty response[/red] ({time_info})"
         elif is_deferred:
-            line = f"[blue]⏳[/blue] {model} / {test_name} — captured ({_format_time(t)})"
+            line = f"[blue]⏳[/blue] {model} / {test_name} — captured ({time_info})"
         elif result.test.eval_type == "manual":
-            line = f"[yellow]?[/yellow]  {model} / {test_name} — review ({_format_time(t)})"
+            line = f"[yellow]?[/yellow]  {model} / {test_name} — review ({time_info})"
         elif passed:
-            line = f"[green]✓[/green]  {model} / {test_name} — {score:.0%} ({_format_time(t)})"
+            line = f"[green]✓[/green]  {model} / {test_name} — {score:.0%} ({time_info})"
         else:
-            line = f"[red]✗[/red]  {model} / {test_name} — {score:.0%} ({_format_time(t)})"
+            # Show brief failure reason
+            reason = result.eval_result.details
+            if len(reason) > 60:
+                reason = reason[:57] + "..."
+            line = f"[red]✗[/red]  {model} / {test_name} — {score:.0%} [dim]{reason}[/dim] ({time_info})"
+        completed_results.append(line)
+        live.update(build_progress_table())
+
+    def on_skip(model, test_name, result):
+        nonlocal completed, current_model
+        completed += 1
+        current_model = ""
+        score = result.eval_result.score
+        line = f"[blue]♻[/blue]  {model} / {test_name} — reused {score:.0%}"
         completed_results.append(line)
         live.update(build_progress_table())
 
@@ -322,9 +399,10 @@ def _cmd_run(args, console: Console):
         f"\n[bold]Running {len(tests)} tests x {len(models)} models "
         f"= {total} evaluations[/bold]"
     )
+    token_info = f"max {args.max_tokens} tokens" if args.max_tokens else "unlimited tokens"
     console.print(
         f"[dim]Timeout: {_format_time(args.timeout)}/test, "
-        f"max {args.max_tokens} tokens/test[/dim]\n"
+        f"{token_info}/test[/dim]\n"
     )
 
     with Live(build_progress_table(), console=console, refresh_per_second=2) as live:
@@ -334,19 +412,72 @@ def _cmd_run(args, console: Console):
             on_token=on_token,
             max_tokens=args.max_tokens,
             timeout=args.timeout,
+            previous_results=previous_results,
+            on_skip=on_skip,
         )
+
+    # Verbose: show full responses after each test
+    if args.verbose:
+        console.print()
+        n_models = len(models)
+        for test in tests:
+            console.print(f"\n[bold cyan]━━━ {test.category}/{test.name} ━━━[/bold cyan]")
+            console.print(f"[dim]{test.description}[/dim]\n")
+
+            # Build panels for each model
+            panels = []
+            for model in models:
+                model_results = results[model]
+                r = next((r for r in model_results if r.test.name == test.name), None)
+                if r is None:
+                    continue
+
+                score = r.eval_result.score
+                passed = r.eval_result.passed
+                time_s = r.model_response.total_time
+                style = "green" if passed else "red"
+                header = f"{model}  [{style}]{score:.0%}[/{style}]  {time_s:.1f}s"
+                response = r.model_response.response or "[dim]<empty response>[/dim]"
+                eval_line = f"\n\n[dim]Eval: {r.eval_result.details}[/dim]"
+
+                panels.append(Panel(
+                    response + eval_line,
+                    title=header,
+                    title_align="left",
+                    border_style="cyan" if passed else "red",
+                ))
+
+            if n_models > 1:
+                # Side-by-side using a table to hold the panels
+                side_table = Table(
+                    show_header=False, expand=True,
+                    show_edge=False, box=None, padding=(0, 1),
+                )
+                for _ in panels:
+                    side_table.add_column(ratio=1)
+                side_table.add_row(*panels)
+                console.print(side_table)
+            else:
+                for panel in panels:
+                    panel.width = min(console.width, 120)
+                    console.print(panel)
+
+            console.print()
 
     print_summary(results, console)
 
     if not args.no_save:
-        md_path, json_path = save_results(results, RESULTS_DIR)
+        model_paths = save_results(results, RESULTS_DIR)
+        md_path = save_markdown(results, RESULTS_DIR)
         console.print(f"\n[dim]Results saved to:[/dim]")
+        for p in model_paths:
+            console.print(f"  {p}")
         console.print(f"  {md_path}")
-        console.print(f"  {json_path}")
         if judge_count:
+            paths_str = " ".join(str(p) for p in model_paths)
             console.print(
                 f"\n[bold]To score with Claude:[/bold] "
-                f"crucible judge {json_path}"
+                f"crucible judge {paths_str}"
             )
 
 
@@ -376,28 +507,71 @@ def _cmd_judge(args, console: Console):
 # ── crucible compare ──────────────────────────────────────────────────
 
 
+def _load_compare_data(files: list[str], console: Console) -> tuple[list[str], dict]:
+    """Load result data from one or more files. Returns (models, lookup).
+
+    Handles both per-model files (new format) and legacy multi-model files.
+    lookup maps (model, test_name) → result dict.
+    """
+    lookup = {}
+    models_seen = []
+
+    for raw_path in files:
+        path = Path(raw_path)
+        if not path.exists():
+            path = RESULTS_DIR / raw_path
+        if not path.exists():
+            console.print(f"[red]File not found: {raw_path}[/red]")
+            console.print(f"[dim]Available results:[/dim]")
+            for f in sorted(RESULTS_DIR.glob("*.json")):
+                console.print(f"  {f.name}")
+            sys.exit(1)
+
+        with open(path) as f:
+            data = json.load(f)
+
+        if "model" in data and "results" in data:
+            # Per-model format
+            model = data["model"]
+            if model not in models_seen:
+                models_seen.append(model)
+            for entry in data["results"]:
+                lookup[(model, entry["test"])] = entry
+        elif "models" in data:
+            # Legacy multi-model format
+            for model, entries in data["models"].items():
+                if model not in models_seen:
+                    models_seen.append(model)
+                for entry in entries:
+                    lookup[(model, entry["test"])] = entry
+
+    return models_seen, lookup
+
+
 def _cmd_compare(args, console: Console):
-    """Side-by-side comparison of responses from a previous run."""
-    results_path = Path(args.results_file)
-    if not results_path.exists():
-        results_path = RESULTS_DIR / args.results_file
-    if not results_path.exists():
-        console.print(f"[red]File not found: {args.results_file}[/red]")
-        console.print(f"[dim]Available results:[/dim]")
-        for f in sorted(RESULTS_DIR.glob("*.json")):
-            console.print(f"  {f.name}")
-        sys.exit(1)
+    """Side-by-side comparison of responses."""
+    files = args.results_files
 
-    with open(results_path) as f:
-        data = json.load(f)
+    # If no files given, auto-load all per-model DBs in results/
+    if not files:
+        files = [str(f) for f in sorted(RESULTS_DIR.glob("*.json"))
+                 if not f.stem[0].isdigit() and "_judged" not in f.stem]
+        if not files:
+            console.print("[red]No result files found.[/red]")
+            sys.exit(1)
 
-    models = list(data["models"].keys())
+    models, lookup = _load_compare_data(files, console)
+
     if not models:
-        console.print("[red]No model data in results file.[/red]")
+        console.print("[red]No model data found.[/red]")
         sys.exit(1)
 
-    # Get all test names from first model
-    all_tests = [(r["category"], r["test"]) for r in data["models"][models[0]]]
+    # Get all test names across all models
+    all_tests_set: dict[str, str] = {}  # test_name → category
+    for (model, test_name), entry in lookup.items():
+        if test_name not in all_tests_set:
+            all_tests_set[test_name] = entry.get("category", "")
+    all_tests = [(cat, name) for name, cat in all_tests_set.items()]
 
     # Filter by category and/or test name
     filtered = all_tests
@@ -426,41 +600,86 @@ def _cmd_compare(args, console: Console):
             lookup[(model, r["test"])] = r
 
     # Display each matched test
+    n_models = len(models)
     for cat, test_name in filtered:
-        console.print(f"\n[bold cyan]━━━ {cat}/{test_name} ━━━[/bold cyan]\n")
+        console.print(f"\n[bold cyan]━━━ {cat}/{test_name} ━━━[/bold cyan]")
 
-        # Show prompt (from first model's result)
+        # Show the prompt if stored in results
         first = lookup.get((models[0], test_name), {})
-        # Prompt isn't stored in results — show eval info instead
+        prompt = first.get("prompt", "")
+        if prompt:
+            console.print(Panel(
+                prompt.strip(),
+                title="[dim]Prompt[/dim]",
+                title_align="left",
+                border_style="dim",
+                width=min(console.width, 120),
+            ))
+        console.print()
+
+        # Build panels for each model
+        panels = []
         for model in models:
             r = lookup.get((model, test_name))
             if not r:
                 continue
-
             score_str = f"{r['score']:.0%}" if r['score'] is not None else "—"
             time_str = f"{r['total_time']:.1f}s"
             passed = r.get("passed", False)
-            judge = r.get("judge_details", "")
-
             style = "green" if passed else "red"
             header = f"{model}  [{style}]{score_str}[/{style}]  {time_str}"
-            if judge:
-                header += f"  [dim]{judge[:60]}[/dim]"
+            response = r.get("response", "") or "[dim]<empty response>[/dim]"
 
-            # Truncate very long responses for readability
-            response = r.get("response", "")
-            if len(response) > 2000:
-                response = response[:2000] + "\n\n[dim]... truncated ...[/dim]"
-
-            console.print(Panel(
+            panels.append(Panel(
                 response,
                 title=header,
                 title_align="left",
                 border_style="cyan" if passed else "red",
-                width=min(console.width, 120),
             ))
 
+        if n_models > 1:
+            # Side-by-side using a table to hold the panels
+            side_table = Table(
+                show_header=False, expand=True,
+                show_edge=False, box=None, padding=(0, 1),
+            )
+            for _ in panels:
+                side_table.add_column(ratio=1)
+            side_table.add_row(*panels)
+            console.print(side_table)
+        else:
+            for panel in panels:
+                panel.width = min(console.width, 120)
+                console.print(panel)
+
         console.print()
+
+
+# ── crucible report ────────────────────────────────────────────────────
+
+
+def _cmd_report(args, console: Console):
+    """Generate a visual HTML report with charts."""
+    from crucible.report import generate_html_report
+
+    files = args.results_files
+    if not files:
+        files = [str(f) for f in sorted(RESULTS_DIR.glob("*.json"))
+                 if not f.stem[0].isdigit() and "_judged" not in f.stem]
+        if not files:
+            console.print("[red]No result files found in results/[/red]")
+            sys.exit(1)
+
+    models, lookup = _load_compare_data(files, console)
+
+    if not models:
+        console.print("[red]No model data found.[/red]")
+        sys.exit(1)
+
+    output_path = Path(args.output) if args.output else RESULTS_DIR / "report.html"
+    path = generate_html_report(models, lookup, output_path, title=args.title)
+    console.print(f"[bold green]Report generated:[/bold green] {path}")
+    console.print(f"[dim]Open in browser: file://{path.resolve()}[/dim]")
 
 
 # ── main ───────────────────────────────────────────────────────────────
@@ -476,7 +695,7 @@ def main():
     # --- crucible list ---
     list_p = subparsers.add_parser("list", help="List models and/or tests")
     list_p.add_argument("what", nargs="?", default="all",
-                        choices=["all", "models", "tests", "results"],
+                        choices=["all", "models", "tests", "prompts", "results"],
                         help="What to list (default: all)")
 
     # --- crucible run ---
@@ -488,8 +707,14 @@ def main():
                        help="Filter by test name (substring match, e.g. beam section)")
     run_p.add_argument("--no-save", action="store_true")
     run_p.add_argument("--interactive", "-i", action="store_true")
-    run_p.add_argument("--timeout", "-t", type=float, default=300.0)
-    run_p.add_argument("--max-tokens", type=int, default=2048)
+    run_p.add_argument("--timeout", type=float, default=600.0,
+                       help="Max seconds per test (default: 600, overridden by per-test timeout in YAML)")
+    run_p.add_argument("--tokens", type=int, default=0, dest="max_tokens",
+                       help="Max completion tokens (0 = unlimited, default)")
+    run_p.add_argument("--verbose", "-v", action="store_true",
+                       help="Show full model responses after each test")
+    run_p.add_argument("--fresh", action="store_true",
+                       help="Ignore previous results and re-run all tests")
 
     # --- crucible judge ---
     judge_p = subparsers.add_parser("judge", help="Score responses with Claude Code")
@@ -500,23 +725,33 @@ def main():
 
     # --- crucible compare ---
     cmp_p = subparsers.add_parser("compare", help="Side-by-side response comparison")
-    cmp_p.add_argument("results_file",
-                       help="Results JSON path (or filename in results/)")
+    cmp_p.add_argument("results_files", nargs="*",
+                       help="Result JSON files (default: all per-model files in results/)")
     cmp_p.add_argument("--category", "-c", nargs="+",
                        help="Filter by category")
     cmp_p.add_argument("--test", "-n", nargs="+",
                        help="Filter by test name (substring match)")
 
-    # Top-level flags → implicit `run`
-    parser.add_argument("--models", "-m", nargs="+")
-    parser.add_argument("--category", "-c", nargs="+")
-    parser.add_argument("--test", "-n", nargs="+")
-    parser.add_argument("--no-save", action="store_true")
-    parser.add_argument("--interactive", "-i", action="store_true")
-    parser.add_argument("--timeout", "-t", type=float, default=300.0)
-    parser.add_argument("--max-tokens", type=int, default=2048)
+    # --- crucible report ---
+    report_p = subparsers.add_parser("report", help="Generate HTML visual report")
+    report_p.add_argument("results_files", nargs="*",
+                          help="Result JSON files (default: all per-model files in results/)")
+    report_p.add_argument("-o", "--output", default=None,
+                          help="Output HTML path (default: results/report.html)")
+    report_p.add_argument("--title", default="Crucible Benchmark Report",
+                          help="Report title")
 
-    args = parser.parse_args()
+    # If no subcommand given, default to `run` (supports bare `crucible -m 1 2`)
+    known_commands = {"list", "run", "judge", "compare", "report"}
+    argv = sys.argv[1:]
+    if argv and argv[0] not in known_commands and not argv[0].startswith("-h"):
+        # Looks like flags without a subcommand — treat as `run`
+        argv = ["run"] + argv
+    elif not argv:
+        # Bare `crucible` → interactive run
+        argv = ["run"]
+
+    args = parser.parse_args(argv)
     console = Console()
 
     if args.command == "list":
@@ -525,6 +760,8 @@ def main():
         _cmd_judge(args, console)
     elif args.command == "compare":
         _cmd_compare(args, console)
+    elif args.command == "report":
+        _cmd_report(args, console)
     else:
         _cmd_run(args, console)
 

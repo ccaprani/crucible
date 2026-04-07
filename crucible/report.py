@@ -1,5 +1,6 @@
-"""Report generation — Rich console tables and markdown/JSON file export."""
+"""Report generation — Rich console tables, per-model JSON database, markdown export."""
 
+import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
@@ -9,6 +10,151 @@ from rich.table import Table
 from rich.text import Text
 
 from .runner import TestResult
+
+
+def _prompt_hash(prompt: str) -> str:
+    """Short hash of a prompt for staleness detection."""
+    return hashlib.sha256(prompt.strip().encode()).hexdigest()[:12]
+
+
+def _model_filename(model: str) -> str:
+    """Convert model name to a safe filename: 'gemma4:31b' → 'gemma4_31b'."""
+    return model.replace(":", "_").replace("/", "_")
+
+
+# ── Per-model result database ────────────────────────────────────────
+
+
+def load_model_results(results_dir: Path, model: str) -> dict[str, dict]:
+    """Load the result database for a single model.
+
+    Returns dict mapping test_name → result entry.
+    """
+    path = results_dir / f"{_model_filename(model)}.json"
+    if not path.exists():
+        return {}
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        return {entry["test"]: entry for entry in data.get("results", [])}
+    except (json.JSONDecodeError, KeyError, OSError):
+        return {}
+
+
+def save_model_results(
+    results: list[TestResult],
+    model: str,
+    output_dir: Path,
+) -> Path:
+    """Save/update the per-model result database. Returns the file path."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / f"{_model_filename(model)}.json"
+
+    # Load existing results to preserve tests not in this run
+    existing = {}
+    if path.exists():
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            existing = {entry["test"]: entry for entry in data.get("results", [])}
+        except (json.JSONDecodeError, KeyError, OSError):
+            pass
+
+    # Update with new results
+    for r in results:
+        entry = {
+            "test": r.test.name,
+            "category": r.test.category,
+            "prompt": r.test.prompt.strip(),
+            "prompt_hash": _prompt_hash(r.test.prompt),
+            "eval_type": r.test.eval_type,
+            "score": r.eval_result.score,
+            "passed": r.eval_result.passed,
+            "eval_details": r.eval_result.details,
+            "total_time": round(r.model_response.total_time, 3),
+            "ttft": round(r.model_response.time_to_first_token, 3),
+            "prompt_tokens": r.model_response.prompt_tokens,
+            "completion_tokens": r.model_response.completion_tokens,
+            "tokens_per_sec": round(r.model_response.completion_tokens / r.model_response.total_time, 1) if r.model_response.total_time > 0 else 0,
+            "response": r.model_response.response,
+            "timestamp": datetime.now().isoformat(),
+        }
+        if r.model_response.thinking_tokens:
+            entry["thinking_tokens"] = r.model_response.thinking_tokens
+        if r.reused:
+            entry["reused"] = True
+        existing[r.test.name] = entry
+
+    # Write back
+    out = {
+        "model": model,
+        "updated": datetime.now().isoformat(),
+        "results": list(existing.values()),
+    }
+    with open(path, "w") as f:
+        json.dump(out, f, indent=2)
+
+    return path
+
+
+def load_previous_results(
+    results_dir: Path,
+    models: list[str],
+    tests: list,
+) -> dict[tuple[str, str], dict]:
+    """Load previous passing results for given models, checking prompt staleness.
+
+    Returns dict mapping (model_name, test_name) → result entry,
+    only for entries where:
+      - the test previously passed
+      - the prompt hash still matches (question hasn't been edited)
+    """
+    # Build current prompt hashes from test definitions
+    current_hashes = {t.name: _prompt_hash(t.prompt) for t in tests}
+    test_names = set(current_hashes.keys())
+
+    cache: dict[tuple[str, str], dict] = {}
+
+    for model in models:
+        db = load_model_results(results_dir, model)
+        for test_name, entry in db.items():
+            if test_name not in test_names:
+                continue
+            if not entry.get("passed", False):
+                continue
+            # Check staleness — prompt edited since last run?
+            stored_hash = entry.get("prompt_hash", "")
+            if stored_hash and stored_hash != current_hashes[test_name]:
+                continue  # stale — prompt changed, re-run
+            cache[(model, test_name)] = entry
+
+    # Also scan legacy timestamped files for backward compatibility
+    for json_file in sorted(results_dir.glob("*.json"), reverse=True):
+        stem = json_file.stem
+        # Skip per-model DB files and judged files
+        if "_judged" in stem or not stem[0].isdigit():
+            continue
+        try:
+            with open(json_file) as f:
+                data = json.load(f)
+            for model_name, entries in data.get("models", {}).items():
+                if model_name not in models:
+                    continue
+                for entry in entries:
+                    key = (model_name, entry["test"])
+                    if key in cache or entry["test"] not in test_names:
+                        continue
+                    if not entry.get("passed", False):
+                        continue
+                    # Legacy files don't have prompt_hash — accept them
+                    cache[key] = entry
+        except (json.JSONDecodeError, KeyError, OSError):
+            continue
+
+    return cache
+
+
+# ── Console display ──────────────────────────────────────────────────
 
 
 def print_summary(
@@ -64,9 +210,17 @@ def print_summary(
                 score = r.eval_result.score
                 passed = r.eval_result.passed
                 time_s = r.model_response.total_time
+                empty = not r.model_response.response.strip()
+                timed_out = r.model_response.timed_out
 
-                if r.test.eval_type == "manual":
+                if timed_out:
+                    cell = Text(f"⏱ timeout ({time_s:.1f}s)", style="red")
+                elif empty:
+                    cell = Text(f"✗ empty ({time_s:.1f}s)", style="red")
+                elif r.test.eval_type == "manual":
                     cell = Text(f"review ({time_s:.1f}s)", style="yellow")
+                elif passed and r.reused:
+                    cell = Text(f"♻ {score:.0%} (reused)", style="green")
                 elif passed:
                     cell = Text(f"✓ {score:.0%} ({time_s:.1f}s)", style="green")
                 else:
@@ -90,14 +244,35 @@ def print_summary(
     for model in models:
         summary_table.add_column(model, justify="center")
 
+    # Check if any model used thinking tokens
+    any_thinking = any(
+        r.model_response.thinking_tokens > 0
+        for rs in results.values() for r in rs
+    )
+
+    # Helper: average generation speed (completion tokens / total time)
+    def _avg_tks(rs: list) -> str:
+        active = [r for r in rs if not r.reused and r.model_response.total_time > 0]
+        if not active:
+            return "—"
+        total_toks = sum(r.model_response.completion_tokens for r in active)
+        total_time = sum(r.model_response.total_time for r in active)
+        return f"{total_toks / total_time:.1f}"
+
     # Compute aggregates
-    for metric_name, metric_fn in [
+    metrics = [
         ("Pass rate", lambda rs: f"{sum(1 for r in rs if r.eval_result.passed) / len(rs):.0%}"),
         ("Avg score", lambda rs: f"{sum(r.eval_result.score for r in rs) / len(rs):.2f}"),
         ("Avg time", lambda rs: f"{sum(r.model_response.total_time for r in rs) / len(rs):.1f}s"),
         ("Avg TTFT", lambda rs: f"{sum(r.model_response.time_to_first_token for r in rs) / len(rs):.2f}s"),
+        ("Avg tk/s", _avg_tks),
         ("Total tokens", lambda rs: f"{sum(r.model_response.total_tokens for r in rs):,}"),
-    ]:
+    ]
+    if any_thinking:
+        metrics.append(
+            ("Thinking tokens", lambda rs: f"{sum(r.model_response.thinking_tokens for r in rs):,}")
+        )
+    for metric_name, metric_fn in metrics:
         row = [metric_name]
         for model in models:
             row.append(metric_fn(results[model]))
@@ -106,55 +281,33 @@ def print_summary(
     console.print(summary_table)
 
 
+# ── File export ──────────────────────────────────────────────────────
+
+
 def save_results(
     results: dict[str, list[TestResult]],
     output_dir: Path,
-) -> tuple[Path, Path]:
-    """Save results as both markdown and JSON. Returns (md_path, json_path)."""
+) -> list[Path]:
+    """Save results to per-model JSON databases. Returns list of paths written."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for model, model_results in results.items():
+        path = save_model_results(model_results, model, output_dir)
+        paths.append(path)
+    return paths
+
+
+def save_markdown(
+    results: dict[str, list[TestResult]],
+    output_dir: Path,
+) -> Path:
+    """Save a timestamped markdown report. Returns the path."""
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-
     md_path = output_dir / f"{timestamp}.md"
-    json_path = output_dir / f"{timestamp}.json"
-
-    # Build JSON-serializable structure
-    json_data = _build_json(results)
-
-    with open(json_path, "w") as f:
-        json.dump(json_data, f, indent=2)
-
     with open(md_path, "w") as f:
         f.write(_build_markdown(results, timestamp))
-
-    return md_path, json_path
-
-
-def _build_json(results: dict[str, list[TestResult]]) -> dict:
-    """Build JSON-serializable results dict."""
-    data = {
-        "timestamp": datetime.now().isoformat(),
-        "models": {},
-    }
-
-    for model, model_results in results.items():
-        model_data = []
-        for r in model_results:
-            model_data.append({
-                "test": r.test.name,
-                "category": r.test.category,
-                "eval_type": r.test.eval_type,
-                "score": r.eval_result.score,
-                "passed": r.eval_result.passed,
-                "eval_details": r.eval_result.details,
-                "total_time": round(r.model_response.total_time, 3),
-                "ttft": round(r.model_response.time_to_first_token, 3),
-                "prompt_tokens": r.model_response.prompt_tokens,
-                "completion_tokens": r.model_response.completion_tokens,
-                "response": r.model_response.response,
-            })
-        data["models"][model] = model_data
-
-    return data
+    return md_path
 
 
 def _build_markdown(results: dict[str, list[TestResult]], timestamp: str) -> str:
@@ -220,3 +373,521 @@ def _build_markdown(results: dict[str, list[TestResult]], timestamp: str) -> str
         lines.append("")
 
     return "\n".join(lines)
+
+
+# ── HTML visual report ──────────────────────────────────────────────
+
+
+def generate_html_report(
+    models: list[str],
+    lookup: dict[tuple[str, str], dict],
+    output_path: Path,
+    title: str = "Crucible Benchmark Report",
+) -> Path:
+    """Generate a self-contained HTML report with Chart.js visualisations.
+
+    Args:
+        models: list of model names
+        lookup: mapping (model, test_name) → result dict
+        output_path: where to write the HTML file
+        title: report title
+    Returns:
+        The output path
+    """
+    # ── Gather all tests and categories ──
+    all_tests: dict[str, str] = {}  # test_name → category
+    for (model, test_name), entry in lookup.items():
+        if test_name not in all_tests:
+            all_tests[test_name] = entry.get("category", "unknown")
+
+    # Sort tests by category then name
+    sorted_tests = sorted(all_tests.items(), key=lambda x: (x[1], x[0]))
+    test_names = [t[0] for t in sorted_tests]
+    categories = sorted(set(all_tests.values()))
+
+    # ── Compute data for charts ──
+
+    # 1. Per-category average scores (radar chart)
+    cat_scores: dict[str, dict[str, float]] = {m: {} for m in models}
+    for model in models:
+        for cat in categories:
+            cat_tests = [t for t, c in all_tests.items() if c == cat]
+            scores = [lookup[(model, t)]["score"] for t in cat_tests if (model, t) in lookup]
+            cat_scores[model][cat] = sum(scores) / len(scores) if scores else 0
+
+    # 2. Pass rates (bar chart)
+    pass_rates: dict[str, float] = {}
+    for model in models:
+        entries = [lookup[(model, t)] for t in test_names if (model, t) in lookup]
+        pass_rates[model] = sum(1 for e in entries if e.get("passed")) / len(entries) if entries else 0
+
+    # 3. Per-test scores (grouped bar chart)
+    test_scores: dict[str, dict[str, float | None]] = {}
+    for t in test_names:
+        test_scores[t] = {}
+        for model in models:
+            entry = lookup.get((model, t))
+            test_scores[t][model] = entry["score"] if entry else None
+
+    # 4. Performance: avg tk/s and avg TTFT
+    perf_tks: dict[str, float] = {}
+    perf_ttft: dict[str, float] = {}
+    for model in models:
+        entries = [lookup[(model, t)] for t in test_names
+                   if (model, t) in lookup and not lookup[(model, t)].get("reused")]
+        if entries:
+            total_comp = sum(e.get("completion_tokens", 0) for e in entries)
+            total_time = sum(e.get("total_time", 0) for e in entries)
+            perf_tks[model] = round(total_comp / total_time, 1) if total_time > 0 else 0
+            perf_ttft[model] = round(sum(e.get("ttft", 0) for e in entries) / len(entries), 2)
+        else:
+            perf_tks[model] = 0
+            perf_ttft[model] = 0
+
+    # 5. Summary stats
+    summary: dict[str, dict] = {}
+    for model in models:
+        entries = [lookup[(model, t)] for t in test_names if (model, t) in lookup]
+        n = len(entries)
+        if n == 0:
+            continue
+        summary[model] = {
+            "tests": n,
+            "passed": sum(1 for e in entries if e.get("passed")),
+            "avg_score": round(sum(e["score"] for e in entries) / n, 3),
+            "avg_time": round(sum(e.get("total_time", 0) for e in entries) / n, 1),
+            "total_tokens": sum(e.get("prompt_tokens", 0) + e.get("completion_tokens", 0) for e in entries),
+            "tk_s": perf_tks.get(model, 0),
+        }
+
+    # ── Colours for models ──
+    palette = ["#4dc9f6", "#f67019", "#f53794", "#537bc4", "#acc236",
+               "#166a8f", "#00a950", "#8549ba", "#e8c3b9", "#c45850"]
+    model_colours = {m: palette[i % len(palette)] for i, m in enumerate(models)}
+
+    # ── Build the JSON data blob for JS ──
+    chart_data = json.dumps({
+        "models": models,
+        "categories": [c.replace("_", " ").title() for c in categories],
+        "categoriesRaw": categories,
+        "testNames": test_names,
+        "testLabels": [t.replace("_", " ") for t in test_names],
+        "testCategories": [all_tests[t].replace("_", " ").title() for t in test_names],
+        "catScores": cat_scores,
+        "passRates": pass_rates,
+        "testScores": test_scores,
+        "perfTks": perf_tks,
+        "perfTtft": perf_ttft,
+        "summary": summary,
+        "colours": model_colours,
+        "lookup": {f"{m}|{t}": {
+            "score": e["score"],
+            "passed": e.get("passed", False),
+            "time": e.get("total_time", 0),
+            "tks": e.get("tokens_per_sec", 0),
+            "ttft": e.get("ttft", 0),
+        } for (m, t), e in lookup.items()},
+    })
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    html = _HTML_TEMPLATE.replace("{{TITLE}}", title)
+    html = html.replace("{{TIMESTAMP}}", timestamp)
+    html = html.replace("{{N_MODELS}}", str(len(models)))
+    html = html.replace("{{N_TESTS}}", str(len(test_names)))
+    html = html.replace("{{CHART_DATA}}", chart_data)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w") as f:
+        f.write(html)
+
+    return output_path
+
+
+_HTML_TEMPLATE = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{TITLE}}</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  :root {
+    --bg: #0f0f1a;
+    --card: #1a1a2e;
+    --card-border: #2a2a4a;
+    --text: #e8e8f0;
+    --text-dim: #8888aa;
+    --accent: #4dc9f6;
+    --green: #4caf50;
+    --red: #ef5350;
+    --yellow: #ffc107;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    padding: 24px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  header {
+    text-align: center;
+    margin-bottom: 32px;
+    padding: 32px 0;
+    border-bottom: 1px solid var(--card-border);
+  }
+  header h1 {
+    font-size: 2.2rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent), #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 8px;
+  }
+  header .subtitle {
+    color: var(--text-dim);
+    font-size: 0.95rem;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+    gap: 20px;
+    margin-bottom: 20px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: 24px;
+  }
+  .card h2 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-dim);
+    margin-bottom: 16px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-size: 0.85rem;
+  }
+  .card.wide { grid-column: 1 / -1; }
+  .card.hero { grid-column: 1 / -1; }
+  .hero-inner {
+    display: flex;
+    gap: 32px;
+    align-items: flex-start;
+  }
+  .hero-inner .chart-wrap {
+    flex: 0 0 480px;
+    max-height: 420px;
+  }
+  .summary-cards {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    align-content: start;
+  }
+  .model-card {
+    background: var(--bg);
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    padding: 16px;
+    text-align: center;
+    border-top: 3px solid var(--accent);
+  }
+  .model-card .name {
+    font-weight: 600;
+    font-size: 0.95rem;
+    margin-bottom: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .model-card .stat {
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    margin: 4px 0;
+  }
+  .model-card .big {
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin: 4px 0;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+  th {
+    background: var(--bg);
+    color: var(--text-dim);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 0.5px;
+    padding: 10px 12px;
+    text-align: left;
+    position: sticky;
+    top: 0;
+  }
+  td {
+    padding: 8px 12px;
+    border-top: 1px solid var(--card-border);
+  }
+  tr:hover td { background: rgba(77, 201, 246, 0.05); }
+  .pass { color: var(--green); font-weight: 600; }
+  .fail { color: var(--red); font-weight: 600; }
+  .score-cell { text-align: center; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .badge-pass { background: rgba(76, 175, 80, 0.15); color: var(--green); }
+  .badge-fail { background: rgba(239, 83, 80, 0.15); color: var(--red); }
+  footer {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    margin-top: 32px;
+    padding-top: 16px;
+    border-top: 1px solid var(--card-border);
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+  @media (max-width: 600px) {
+    .grid { grid-template-columns: 1fr; }
+    .hero-inner { flex-direction: column; }
+    .hero-inner .chart-wrap { flex: 1; max-width: 100%; }
+    body { padding: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>{{TITLE}}</h1>
+  <p class="subtitle">Generated {{TIMESTAMP}} &middot; {{N_MODELS}} models &middot; {{N_TESTS}} tests</p>
+</header>
+
+<!-- Hero: radar + model summary cards -->
+<div class="card hero">
+  <h2>Category Performance</h2>
+  <div class="hero-inner">
+    <div class="chart-wrap">
+      <canvas id="radarChart"></canvas>
+    </div>
+    <div class="summary-cards" id="summaryCards"></div>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h2>Pass Rate by Model</h2>
+    <canvas id="passRateChart"></canvas>
+  </div>
+  <div class="card">
+    <h2>Generation Speed (tk/s)</h2>
+    <canvas id="perfChart"></canvas>
+  </div>
+</div>
+
+<div class="card wide">
+  <h2>Per-Test Scores</h2>
+  <canvas id="testScoresChart" style="max-height:400px;"></canvas>
+</div>
+
+<div class="card wide">
+  <h2>Full Results</h2>
+  <div style="overflow-x:auto;">
+    <table id="resultsTable"></table>
+  </div>
+</div>
+
+<footer>
+  Crucible &mdash; LLM benchmark for structural engineering &middot;
+  <a href="https://github.com/ccaprani/crucible">github.com/ccaprani/crucible</a>
+</footer>
+
+<script>
+const D = {{CHART_DATA}};
+
+// Chart.js global defaults
+Chart.defaults.color = '#8888aa';
+Chart.defaults.borderColor = '#2a2a4a';
+Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+
+// ── Summary cards ──
+const cardsEl = document.getElementById('summaryCards');
+D.models.forEach(m => {
+  const s = D.summary[m];
+  if (!s) return;
+  const col = D.colours[m];
+  const pct = Math.round(s.passed / s.tests * 100);
+  cardsEl.innerHTML += `
+    <div class="model-card" style="border-top-color:${col}">
+      <div class="name">${m}</div>
+      <div class="big" style="color:${col}">${pct}%</div>
+      <div class="stat">pass rate (${s.passed}/${s.tests})</div>
+      <div class="stat">avg score: ${(s.avg_score * 100).toFixed(0)}%</div>
+      <div class="stat">${s.tk_s} tk/s &middot; ${s.avg_time}s avg</div>
+      <div class="stat">${s.total_tokens.toLocaleString()} tokens</div>
+    </div>`;
+});
+
+// ── Radar chart ──
+new Chart(document.getElementById('radarChart'), {
+  type: 'radar',
+  data: {
+    labels: D.categories,
+    datasets: D.models.map(m => ({
+      label: m,
+      data: D.categories.map((_, i) => D.catScores[m][D.categoriesRaw[i]]),
+      borderColor: D.colours[m],
+      backgroundColor: D.colours[m] + '22',
+      borderWidth: 2,
+      pointRadius: 4,
+      pointBackgroundColor: D.colours[m],
+    }))
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: true,
+    scales: {
+      r: {
+        min: 0, max: 1,
+        ticks: { stepSize: 0.2, backdropColor: 'transparent' },
+        grid: { color: '#2a2a4a' },
+        angleLines: { color: '#2a2a4a' },
+        pointLabels: { font: { size: 13 }, color: '#e8e8f0' },
+      }
+    },
+    plugins: {
+      legend: { position: 'bottom', labels: { padding: 20, usePointStyle: true } },
+      tooltip: {
+        callbacks: {
+          label: ctx => `${ctx.dataset.label}: ${(ctx.parsed.r * 100).toFixed(0)}%`
+        }
+      }
+    }
+  }
+});
+
+// ── Pass rate bar chart ──
+new Chart(document.getElementById('passRateChart'), {
+  type: 'bar',
+  data: {
+    labels: D.models,
+    datasets: [{
+      data: D.models.map(m => D.passRates[m]),
+      backgroundColor: D.models.map(m => D.colours[m] + 'cc'),
+      borderColor: D.models.map(m => D.colours[m]),
+      borderWidth: 1,
+      borderRadius: 6,
+    }]
+  },
+  options: {
+    indexAxis: 'y',
+    responsive: true,
+    plugins: { legend: { display: false },
+      tooltip: { callbacks: { label: ctx => (ctx.parsed.x * 100).toFixed(0) + '%' } }
+    },
+    scales: {
+      x: { min: 0, max: 1, ticks: { callback: v => (v * 100) + '%' } },
+      y: { ticks: { font: { size: 12 } } }
+    }
+  }
+});
+
+// ── Performance chart ──
+new Chart(document.getElementById('perfChart'), {
+  type: 'bar',
+  data: {
+    labels: D.models,
+    datasets: [{
+      label: 'tk/s',
+      data: D.models.map(m => D.perfTks[m]),
+      backgroundColor: D.models.map(m => D.colours[m] + 'cc'),
+      borderColor: D.models.map(m => D.colours[m]),
+      borderWidth: 1,
+      borderRadius: 6,
+    }]
+  },
+  options: {
+    indexAxis: 'y',
+    responsive: true,
+    plugins: { legend: { display: false },
+      tooltip: { callbacks: { label: ctx => ctx.parsed.x.toFixed(1) + ' tk/s' } }
+    },
+    scales: {
+      x: { beginAtZero: true, title: { display: true, text: 'tokens / second' } },
+      y: { ticks: { font: { size: 12 } } }
+    }
+  }
+});
+
+// ── Per-test grouped bar chart ──
+new Chart(document.getElementById('testScoresChart'), {
+  type: 'bar',
+  data: {
+    labels: D.testLabels,
+    datasets: D.models.map(m => ({
+      label: m,
+      data: D.testNames.map(t => D.testScores[t][m]),
+      backgroundColor: D.colours[m] + 'cc',
+      borderColor: D.colours[m],
+      borderWidth: 1,
+      borderRadius: 4,
+    }))
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { position: 'bottom', labels: { usePointStyle: true, padding: 16 } },
+      tooltip: {
+        callbacks: {
+          title: items => D.testCategories[items[0].dataIndex] + ' / ' + items[0].label,
+          label: ctx => ctx.dataset.label + ': ' + (ctx.parsed.y != null ? (ctx.parsed.y * 100).toFixed(0) + '%' : 'N/A'),
+        }
+      }
+    },
+    scales: {
+      x: { ticks: { maxRotation: 45, minRotation: 30, font: { size: 11 } } },
+      y: { min: 0, max: 1, ticks: { callback: v => (v * 100) + '%' } },
+    }
+  }
+});
+
+// ── Results table ──
+const tbl = document.getElementById('resultsTable');
+let thead = '<thead><tr><th>Category</th><th>Test</th>';
+D.models.forEach(m => { thead += `<th class="score-cell">${m}</th>`; });
+thead += '</tr></thead>';
+
+let tbody = '<tbody>';
+let lastCat = '';
+D.testNames.forEach((t, i) => {
+  const cat = D.testCategories[i];
+  const catLabel = cat !== lastCat ? cat : '';
+  lastCat = cat;
+  tbody += `<tr><td>${catLabel}</td><td>${D.testLabels[i]}</td>`;
+  D.models.forEach(m => {
+    const key = m + '|' + t;
+    const r = D.lookup[key];
+    if (!r) { tbody += '<td class="score-cell">&mdash;</td>'; return; }
+    const cls = r.passed ? 'badge-pass' : 'badge-fail';
+    const icon = r.passed ? '✓' : '✗';
+    tbody += `<td class="score-cell"><span class="badge ${cls}">${icon} ${(r.score * 100).toFixed(0)}%</span> <span style="color:#8888aa;font-size:0.75rem">${r.time.toFixed(1)}s</span></td>`;
+  });
+  tbody += '</tr>';
+});
+tbody += '</tbody>';
+tbl.innerHTML = thead + tbody;
+</script>
+</body>
+</html>"""

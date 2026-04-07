@@ -32,15 +32,57 @@ crucible run -m gemma4:31b qwen3.5:27b              # full comparison
 crucible run -m 2 10                                  # by number from `crucible list`
 crucible run -m gemma qwen3.5 -n beam                 # substring match, single test
 crucible run -m gemma4:31b -c code_generation          # single category
-crucible run -m 2 10 -t 300 --max-tokens 2048         # with timeout and token limit
+crucible run -m 2 10 --timeout 300 --tokens 4096       # with timeout and token limit
 ```
 
-### List models, tests, and results
+### Quick smoke tests
+
+Run a single test against a couple of models to check things are working:
 
 ```bash
-crucible list              # everything
-crucible list models       # numbered model list
-crucible list tests        # all test cases with eval types
+crucible run -n beam -m 2 10                           # one test, two models by number
+crucible run -n fizzbuzz -m gemma                      # quick code test, substring model match
+crucible run -n section -m 1                           # section_properties against first model
+crucible run -n beam -m qwen3.5 -v                     # verbose — see the full response
+crucible run -n traceback -m qwen3.5 --timeout 60      # fast timeout for a quick check
+```
+
+The `-n` flag does **substring matching** on test names — `beam` matches `beam_design_as3600`, `section` matches `section_properties`, etc. Use `crucible list tests` to see all available names.
+
+### Incremental results
+
+Crucible automatically **reuses previous passing results**. If you ran `beam_design` last night and it passed, running the full suite today skips it and injects the cached result — no wasted compute.
+
+```bash
+crucible run -m gemma4 qwen3.5 --timeout 900          # skips previously passing tests
+crucible run -m gemma4 qwen3.5 --fresh                 # force re-run everything
+```
+
+Previously passing results show as `♻ 100% (reused)` in the summary table. Failed, timed-out, and deferred tests are always re-run.
+
+### Verbose output
+
+Use `-v` to see full model responses after each test — great for single-test debugging. With 2+ models, responses are shown side-by-side.
+
+```bash
+crucible run -n beam -m gemma4 qwen3.5 -v              # side-by-side responses
+crucible run -n fizzbuzz -m 1 -v                        # single model, full output
+```
+
+### Discover available tests and models
+
+```bash
+crucible list tests        # all test names, grouped by category, with eval types
+crucible list prompts      # full prompts for every test
+crucible list models       # numbered model list (use numbers with -m)
+crucible list              # everything: models, tests, and previous results
+```
+
+Test names shown in `crucible list tests` are what you pass to `-n`. Category names shown as group headings are what you pass to `-c`.
+
+### List results
+
+```bash
 crucible list results      # previous runs
 ```
 
@@ -52,6 +94,8 @@ crucible compare results/2026-04-06_123456.json -n beam       # single test
 crucible compare results/2026-04-06_123456.json -c reasoning  # one category
 ```
 
+Shows the prompt (if stored) followed by model responses in side-by-side panels.
+
 ### Judge with Claude Code (no API tokens)
 
 Subjective tests (student feedback, professional emails, standards interpretation) are captured during `run` and scored later using [Claude Code](https://claude.ai/claude-code) via `--print` mode — uses your Max subscription, not API tokens.
@@ -60,6 +104,17 @@ Subjective tests (student feedback, professional emails, standards interpretatio
 crucible judge results/2026-04-06_123456.json              # all llm_judge tests
 crucible judge results/2026-04-06_123456.json -n feedback   # subset
 ```
+
+## Thinking model support
+
+Models like `qwen3`, `qwen3.5`, `deepseek-r1`, and `gemma4` use internal chain-of-thought reasoning. Crucible handles these automatically:
+
+- **Token budget** — thinking tokens count against `num_predict`, so Crucible inflates the budget (4×) when `--tokens` is set
+- **Progress display** — shows "Thinking: 342 tokens" during the reasoning phase
+- **Timing** — TTFT reflects time to first *content* token, not first thinking token
+- **Reporting** — thinking token counts tracked separately in results
+
+With unlimited tokens (the default), thinking models generate until done — the `--timeout` is the safety net.
 
 ## Test categories
 

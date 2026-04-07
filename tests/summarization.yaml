@@ -4,6 +4,7 @@ description: Condensing technical content, structured extraction, triage
 tests:
   - name: code_clause_extraction
     description: Extract load factors from design standard text as YAML
+    timeout: 240  # medium: 120s observed
     prompt: |
       Extract structured information from the following design standard clause text.
       Output as valid YAML with keys: load_factors (dict), assumptions (list), scope (string).
@@ -28,6 +29,7 @@ tests:
 
   - name: traceback_triage
     description: Diagnose a Python/OpenSeesPy error from traceback
+    timeout: 120  # quick: 47s observed
     prompt: |
       Diagnose this Python traceback and provide:
       1. Root cause (1 sentence)
@@ -55,6 +57,7 @@ tests:
 
   - name: abstract_distillation
     description: Extract method/finding/limitation from research abstract
+    timeout: 120  # quick: 63s observed
     prompt: |
       Extract exactly three items from the following research abstract:
       1. Method used (1 sentence max)
@@ -88,6 +91,7 @@ tests:
 
   - name: meeting_notes_extraction
     description: Extract actions from messy meeting notes
+    timeout: 420  # qwen3.5 timed out at 300s
     prompt: |
       Extract structured information from these research group meeting notes.
       Output as valid JSON with keys:

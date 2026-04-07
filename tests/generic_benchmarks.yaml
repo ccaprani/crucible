@@ -4,6 +4,7 @@ description: Established benchmark-style questions for calibration against known
 tests:
   - name: gsm8k_arithmetic
     description: "Grade-school math reasoning (GSM8K-style)"
+    timeout: 180  # quick: 96s observed
     prompt: |
       A farmer has 3 fields. The first field produces 250 kg of wheat per hectare,
       the second produces 320 kg per hectare, and the third produces 180 kg per hectare.
@@ -21,6 +22,7 @@ tests:
 
   - name: logic_puzzle
     description: Multi-step logical deduction
+    timeout: 600  # both models timed out at 300s
     prompt: |
       Five people (A, B, C, D, E) are seated in a row. Given:
       1. A is not at either end.
@@ -41,6 +43,7 @@ tests:
 
   - name: code_fizzbuzz_variant
     description: "Classic coding challenge with a twist"
+    timeout: 180  # quick: 93s observed
     prompt: |
       Write a Python function `fizzbuzz_sum(n)` that returns the sum of all numbers
       from 1 to n (inclusive) that are NOT divisible by 3 or 5.
@@ -56,6 +59,7 @@ tests:
 
   - name: text_extraction
     description: Precise information extraction from dense text
+    timeout: 120  # quick: 39s observed
     prompt: |
       Extract the following from this text and output as JSON:
       {"people": [...], "amounts": [...], "date": "..."}

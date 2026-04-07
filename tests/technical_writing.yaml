@@ -4,6 +4,7 @@ description: Academic writing, documentation, professional communication, struct
 tests:
   - name: structured_explanation
     description: Monte Carlo reliability explanation as JSON
+    timeout: 300  # medium: 144s observed
     prompt: |
       Explain the Monte Carlo simulation method for structural reliability analysis.
       Target audience: postgraduate engineering students who understand basic probability
@@ -27,6 +28,7 @@ tests:
 
   - name: student_feedback
     description: Constructive PhD feedback on a lit review gap
+    timeout: 180  # quick: 88s observed
     prompt: |
       A PhD student has submitted a literature review chapter on bridge traffic load
       simulation methods. The review covers:
@@ -60,6 +62,7 @@ tests:
 
   - name: professional_email
     description: Professional email to chapter chairs
+    timeout: 420  # qwen3.5 timed out at 300s
     prompt: |
       Draft a 150-word email from the chair of a national structural safety reporting
       body to regional chapter chairs across the country.
@@ -87,6 +90,7 @@ tests:
 
   - name: standards_interpretation
     description: AS 5100.2 loading model comparison
+    timeout: 600  # heavy: 273s observed, qwen3.5 timed out
     prompt: |
       Explain the key differences between the SM1600 and T44 traffic loading models
       in Australian bridge design standard AS 5100.2.

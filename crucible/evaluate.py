@@ -53,9 +53,17 @@ def evaluate(
 
 def _extract_code_blocks(text: str) -> list[str]:
     """Extract Python code blocks from markdown-fenced responses."""
-    # Match ```python ... ``` or ``` ... ```
+    # Match ```python ... ``` or ``` ... ``` (properly closed)
     pattern = r"```(?:python)?\s*\n(.*?)```"
     blocks = re.findall(pattern, text, re.DOTALL)
+
+    if not blocks:
+        # Try unclosed code fences (model stopped mid-block)
+        pattern_unclosed = r"```(?:python)?\s*\n(.+)"
+        unclosed = re.findall(pattern_unclosed, text, re.DOTALL)
+        if unclosed:
+            blocks = [unclosed[0].rstrip("`").strip()]
+
     if not blocks:
         # Try the whole response if no fences found and it looks like code
         stripped = text.strip()
