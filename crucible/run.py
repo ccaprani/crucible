@@ -17,7 +17,7 @@ from rich.table import Table
 from crucible.models import list_available_models
 from crucible.report import (
     load_model_results, load_previous_results,
-    print_summary, save_markdown, save_results,
+    print_summary, save_markdown, save_model_results, save_results,
 )
 from crucible.runner import load_tests, run_tests
 
@@ -360,6 +360,11 @@ def _cmd_run(args, console: Console):
         nonlocal completed, current_model
         completed += 1
         current_model = ""
+
+        # Incremental save — never lose completed work
+        if not args.no_save:
+            save_model_results([result], model, RESULTS_DIR)
+
         t = result.model_response.total_time
         score = result.eval_result.score
         passed = result.eval_result.passed
