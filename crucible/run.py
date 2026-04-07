@@ -132,13 +132,17 @@ def _format_time(seconds: float) -> str:
 
 
 def _resolve_models(raw: list[str], console: Console) -> list[str]:
-    """Resolve model references — accepts numbers, names, or substrings."""
+    """Resolve model references — accepts numbers, names, substrings, or API model names."""
+    from crucible.models import is_api_model
     available = list_available_models()
     available_no_embed = [m for m in available if "embed" not in m.lower()]
 
     resolved = []
     for token in raw:
-        if token.isdigit():
+        # API models pass through directly (e.g. claude-opus-4-6)
+        if is_api_model(token):
+            resolved.append(token)
+        elif token.isdigit():
             idx = int(token) - 1
             if 0 <= idx < len(available_no_embed):
                 resolved.append(available_no_embed[idx])
@@ -370,7 +374,7 @@ def _cmd_run(args, console: Console):
         header_rows = 3
         progress_rows = 4 + min(len(completed_results), 5)
         used = banner_rows + header_rows + progress_rows
-        return max(6, (console.height or 40) - used - 2)
+        return max(6, (console.height or 40) - used - 4)
 
     def build_display() -> Group:
         elapsed_total = time.perf_counter() - run_start
@@ -392,14 +396,16 @@ def _cmd_run(args, console: Console):
                 f"[cyan]{current_model}[/cyan] / [white]{current_test}[/white]"
             )
             if current_tokens < 0:
+                tks = -current_tokens / current_elapsed if current_elapsed > 0 else 0
                 table.add_row(
                     "Thinking",
-                    f"[dim]{-current_tokens} tokens ({_format_time(current_elapsed)})[/dim]"
+                    f"[dim]{-current_tokens} tokens ({_format_time(current_elapsed)}) · {tks:.1f} tk/s[/dim]"
                 )
             else:
+                tks = current_tokens / current_elapsed if current_elapsed > 0 else 0
                 table.add_row(
                     "Generating",
-                    f"{current_tokens} tokens ({_format_time(current_elapsed)})"
+                    f"{current_tokens} tokens ({_format_time(current_elapsed)}) · {tks:.1f} tk/s"
                 )
         for line in completed_results[-5:]:
             table.add_row("", line)
@@ -662,13 +668,20 @@ def _cmd_compare(args, console: Console):
             console.print("[red]No result files found.[/red]")
             sys.exit(1)
 
-    models, lookup = _load_compare_data(files, console)
+    all_models, lookup = _load_compare_data(files, console)
 
-    if not models:
+    if not all_models:
         console.print("[red]No model data found.[/red]")
         sys.exit(1)
 
-    # Get all test names across all models
+    # Filter models if -m specified
+    if args.models:
+        models = _filter_report_models(args.models, all_models, console)
+        lookup = {k: v for k, v in lookup.items() if k[0] in models}
+    else:
+        models = all_models
+
+    # Get all test names across selected models
     all_tests_set: dict[str, str] = {}  # test_name → category
     for (model, test_name), entry in lookup.items():
         if test_name not in all_tests_set:
@@ -694,12 +707,6 @@ def _cmd_compare(args, console: Console):
         for cat, name in all_tests:
             console.print(f"  {cat}/{name}")
         sys.exit(1)
-
-    # Build lookup: (model, test_name) -> result dict
-    lookup = {}
-    for model in models:
-        for r in data["models"][model]:
-            lookup[(model, r["test"])] = r
 
     # Display each matched test
     n_models = len(models)
@@ -755,6 +762,83 @@ def _cmd_compare(args, console: Console):
                 console.print(panel)
 
         console.print()
+
+
+
+# ── crucible register ─────────────────────────────────────────────────
+
+
+_KEYS_PATH = Path.home() / ".config" / "crucible" / "keys.json"
+
+
+def _load_keys() -> dict:
+    """Load stored API keys."""
+    if _KEYS_PATH.exists():
+        try:
+            return json.load(open(_KEYS_PATH))
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _save_keys(keys: dict):
+    """Save API keys to config file."""
+    _KEYS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _KEYS_PATH.write_text(json.dumps(keys, indent=2))
+    _KEYS_PATH.chmod(0o600)  # owner-only read/write
+
+
+def get_api_key(provider: str) -> str | None:
+    """Get API key for a provider — checks env var first, then stored keys."""
+    env_var = f"{provider.upper()}_API_KEY"
+    from_env = os.environ.get(env_var, "").strip()
+    if from_env:
+        return from_env
+    keys = _load_keys()
+    return keys.get(provider)
+
+
+def _cmd_register(args, console: Console):
+    """Register an API key for a provider."""
+    _clear_and_banner(console)
+    provider = args.provider.lower()
+    key = args.key
+
+    valid_providers = {"openrouter", "anthropic"}
+    if provider not in valid_providers:
+        console.print(f"[red]Unknown provider: {provider}[/red]")
+        console.print(f"[dim]Valid providers: {', '.join(sorted(valid_providers))}[/dim]")
+        sys.exit(1)
+
+    keys = _load_keys()
+
+    if key:
+        # Store the key
+        keys[provider] = key
+        _save_keys(keys)
+        masked = key[:8] + "..." + key[-4:]
+        console.print(f"[green]✓[/green] {provider} key stored: {masked}")
+        console.print(f"[dim]Saved to {_KEYS_PATH}[/dim]")
+    else:
+        # Show status
+        existing = get_api_key(provider)
+        if existing:
+            masked = existing[:8] + "..." + existing[-4:]
+            console.print(f"[green]✓[/green] {provider}: {masked}")
+        else:
+            console.print(f"[yellow]✗[/yellow] {provider}: not set")
+            console.print(f"\n[dim]Usage: crucible register {provider} <api-key>[/dim]")
+
+    # Show all provider statuses
+    if not key:
+        console.print(f"\n[bold]API key status:[/bold]")
+        for p in sorted(valid_providers):
+            k = get_api_key(p)
+            if k:
+                console.print(f"  [green]✓[/green] {p}: {k[:8]}...{k[-4:]}")
+            else:
+                console.print(f"  [dim]✗ {p}: not set[/dim]")
+        console.print(f"\n[dim]Claude CLI (Max subscription) needs no key.[/dim]")
 
 
 # ── crucible report ────────────────────────────────────────────────────
@@ -889,10 +973,18 @@ def main():
     cmp_p = subparsers.add_parser("compare", help="Side-by-side response comparison")
     cmp_p.add_argument("results_files", nargs="*",
                        help="Result JSON files (default: all per-model files in results/)")
+    cmp_p.add_argument("-m", "--models", nargs="+",
+                       help="Models to compare (number, name, or substring)")
     cmp_p.add_argument("--category", "-c", nargs="+",
                        help="Filter by category")
     cmp_p.add_argument("--test", "-n", nargs="+",
                        help="Filter by test name (substring match)")
+
+    # --- crucible register ---
+    reg_p = subparsers.add_parser("register", help="Store API keys for providers")
+    reg_p.add_argument("provider", help="Provider name (openrouter, anthropic)")
+    reg_p.add_argument("key", nargs="?", default=None,
+                       help="API key (omit to check status)")
 
     # --- crucible report ---
     report_p = subparsers.add_parser("report", help="Generate HTML visual report")
@@ -908,7 +1000,7 @@ def main():
                           help="Don't auto-open in browser")
 
     # If no subcommand given, default to `run` (supports bare `crucible -m 1 2`)
-    known_commands = {"list", "run", "judge", "compare", "report"}
+    known_commands = {"list", "run", "judge", "compare", "register", "report"}
     argv = sys.argv[1:]
     if argv and argv[0] not in known_commands and not argv[0].startswith("-h"):
         # Looks like flags without a subcommand — treat as `run`
@@ -926,6 +1018,8 @@ def main():
         _cmd_judge(args, console)
     elif args.command == "compare":
         _cmd_compare(args, console)
+    elif args.command == "register":
+        _cmd_register(args, console)
     elif args.command == "report":
         _cmd_report(args, console)
     else:

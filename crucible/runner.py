@@ -7,7 +7,11 @@ from pathlib import Path
 import yaml
 
 from .evaluate import EvalResult, evaluate
-from .models import ModelResponse, run_prompt
+from .models import (
+    ModelResponse, is_api_model, run_prompt,
+    _is_openrouter_model, _is_cli_model,
+    run_prompt_openrouter, run_prompt_cli,
+)
 
 
 @dataclass
@@ -134,13 +138,28 @@ def run_tests(
             if timeout > 0:
                 effective_timeout = min(effective_timeout, timeout)
 
-            response = run_prompt(
-                model=model,
-                prompt=test.prompt,
-                max_tokens=max_tokens,
-                timeout=effective_timeout,
-                on_token=token_cb,
-            )
+            if _is_openrouter_model(model):
+                response = run_prompt_openrouter(
+                    model=model,
+                    prompt=test.prompt,
+                    max_tokens=max_tokens or 4096,
+                    on_token=token_cb,
+                )
+            elif _is_cli_model(model):
+                response = run_prompt_cli(
+                    model=model,
+                    prompt=test.prompt,
+                    max_tokens=max_tokens or 4096,
+                    on_token=token_cb,
+                )
+            else:
+                response = run_prompt(
+                    model=model,
+                    prompt=test.prompt,
+                    max_tokens=max_tokens,
+                    timeout=effective_timeout,
+                    on_token=token_cb,
+                )
 
             # If timed out, mark as failed
             if response.timed_out:
@@ -148,6 +167,9 @@ def run_tests(
                     0.0, False,
                     f"Timed out after {effective_timeout:.0f}s ({response.completion_tokens} tokens generated)",
                 )
+            elif is_api_model(model) and test.eval_type == "llm_judge":
+                # Don't judge an API model with itself — mark as reference
+                eval_result = EvalResult(1.0, True, "Reference answer (API model)")
             else:
                 eval_result = evaluate(
                     response.response, test.eval_type, test.eval_config,

@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import os
 import time
 
 import ollama
@@ -227,3 +228,202 @@ def _estimate_tokens(text: str) -> int:
     if not text:
         return 0
     return max(1, len(text) // 4)
+
+
+# ── Non-Ollama model detection & runners ─────────────────────────────
+
+
+def is_api_model(model: str) -> bool:
+    """Check if a model should be run via a non-Ollama backend.
+
+    Routes:
+      - Contains '/' (e.g. 'anthropic/claude-opus-4-6') → OpenRouter
+      - Starts with 'claude-' (e.g. 'claude-opus-4-6')  → Claude CLI -p
+      - Everything else                                   → Ollama (False)
+    """
+    return "/" in model or model.lower().startswith("claude-")
+
+
+def _is_openrouter_model(model: str) -> bool:
+    return "/" in model
+
+
+def _is_cli_model(model: str) -> bool:
+    return model.lower().startswith("claude-") and "/" not in model
+
+
+def run_prompt_openrouter(
+    model: str,
+    prompt: str,
+    temperature: float = 0.0,
+    max_tokens: int = 4096,
+    on_token: Callable[[int, float, str], None] | None = None,
+) -> ModelResponse:
+    """Run a prompt via OpenRouter (OpenAI-compatible API).
+
+    Requires OPENROUTER_API_KEY environment variable.
+    """
+    import os
+    try:
+        from openai import OpenAI
+    except ImportError:
+        raise RuntimeError(
+            "openai package required for OpenRouter. "
+            "Install with: pip install openai"
+        )
+
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not api_key:
+        # Try crucible's stored keys
+        try:
+            from crucible.run import get_api_key
+            api_key = get_api_key("openrouter") or ""
+        except Exception:
+            pass
+    if not api_key:
+        raise RuntimeError(
+            "No OpenRouter API key found. "
+            "Run: crucible register openrouter <your-key> "
+            "(get one at https://openrouter.ai/keys)"
+        )
+
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key,
+    )
+
+    t_start = time.perf_counter()
+    chunks: list[str] = []
+    token_count = 0
+    ttft: float | None = None
+
+    stream = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=max_tokens,
+        temperature=temperature,
+        stream=True,
+        stream_options={"include_usage": True},
+    )
+
+    prompt_tokens = 0
+    completion_tokens = 0
+
+    for chunk in stream:
+        elapsed = time.perf_counter() - t_start
+        if chunk.usage:
+            prompt_tokens = chunk.usage.prompt_tokens or 0
+            completion_tokens = chunk.usage.completion_tokens or 0
+        if chunk.choices and chunk.choices[0].delta.content:
+            text = chunk.choices[0].delta.content
+            if ttft is None:
+                ttft = elapsed
+            chunks.append(text)
+            token_count += 1
+            if on_token:
+                on_token(token_count, elapsed, text)
+
+    t_total = time.perf_counter() - t_start
+    full_response = "".join(chunks)
+
+    # Fall back to estimates if usage not reported
+    if not prompt_tokens:
+        prompt_tokens = _estimate_tokens(prompt)
+    if not completion_tokens:
+        completion_tokens = _estimate_tokens(full_response)
+
+    return ModelResponse(
+        model=model,
+        prompt=prompt,
+        response=full_response,
+        time_to_first_token=ttft or t_total,
+        total_time=t_total,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=prompt_tokens + completion_tokens,
+        timed_out=False,
+    )
+
+
+def run_prompt_cli(
+    model: str,
+    prompt: str,
+    max_tokens: int = 4096,
+    on_token: Callable[[int, float, str], None] | None = None,
+) -> ModelResponse:
+    """Run a prompt via Claude Code CLI (--print mode).
+
+    Uses the user's existing Claude subscription — no API key needed.
+    Streams stdout for live display.
+    """
+    import shutil
+    import subprocess
+
+    claude_bin = shutil.which("claude")
+    if not claude_bin:
+        raise RuntimeError(
+            "Claude Code CLI not found on PATH. "
+            "Install from https://docs.anthropic.com/en/docs/claude-code"
+        )
+
+    t_start = time.perf_counter()
+    chunks: list[str] = []
+    token_count = 0
+    ttft: float | None = None
+
+    proc = subprocess.Popen(
+        [claude_bin, "-p", "--model", model],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    # Send prompt and close stdin
+    proc.stdin.write(prompt)
+    proc.stdin.close()
+
+    # Stream stdout character by character for live display
+    buf = ""
+    while True:
+        ch = proc.stdout.read(1)
+        if not ch:
+            break
+        elapsed = time.perf_counter() - t_start
+        if ttft is None:
+            ttft = elapsed
+        buf += ch
+        # Emit chunks on word boundaries or newlines for smoother display
+        if ch in (" ", "\n", ".", ",", ";", ":", ")", "]", "}"):
+            chunks.append(buf)
+            token_count += 1
+            if on_token:
+                on_token(token_count, elapsed, buf)
+            buf = ""
+
+    # Flush remaining buffer
+    if buf:
+        elapsed = time.perf_counter() - t_start
+        chunks.append(buf)
+        token_count += 1
+        if on_token:
+            on_token(token_count, elapsed, buf)
+
+    proc.wait()
+    t_total = time.perf_counter() - t_start
+    full_response = "".join(chunks)
+
+    prompt_tokens = _estimate_tokens(prompt)
+    completion_tokens = _estimate_tokens(full_response)
+
+    return ModelResponse(
+        model=model,
+        prompt=prompt,
+        response=full_response,
+        time_to_first_token=ttft or t_total,
+        total_time=t_total,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=prompt_tokens + completion_tokens,
+        timed_out=False,
+    )
