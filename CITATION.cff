@@ -1,0 +1,14 @@
+cff-version: 1.2.0
+title: crucible-ai
+message: "If you use Crucible, please cite the software using this metadata."
+type: software
+authors:
+  - family-names: Caprani
+    given-names: Colin
+    email: colin.caprani@monash.edu
+    affiliation: Monash University
+repository-code: "https://github.com/ccaprani/crucible"
+url: "https://github.com/ccaprani/crucible"
+license: MIT
+version: 0.1.0
+date-released: 2026-04-09

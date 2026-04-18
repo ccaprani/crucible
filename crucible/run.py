@@ -18,7 +18,7 @@ from rich.table import Table
 from rich.text import Text
 
 
-_BANNER = "[bold cyan]╔═╗┬─┐┬ ┬┌─┐┬┌┐ ┬  ┌─┐[/bold cyan]\n[bold cyan]║  ├┬┘│ ││  │├┴┐│  ├┤ [/bold cyan]\n[bold cyan]╚═╝┴└─└─┘└─┘┴└─┘┴─┘└─┘[/bold cyan]"
+_BANNER = "[bold cyan]╔═╗┬─┐┬ ┬┌─┐┬┌┐ ┬  ┌─┐   ┌─┐┬[/bold cyan]\n[bold cyan]║  ├┬┘│ ││  │├┴┐│  ├┤    ├─┤│[/bold cyan]\n[bold cyan]╚═╝┴└─└─┘└─┘┴└─┘┴─┘└─┘   ┴ ┴┴[/bold cyan]"
 
 
 def _clear_and_banner(console: Console):
@@ -26,7 +26,7 @@ def _clear_and_banner(console: Console):
     if sys.stdout.isatty():
         os.system("clear" if os.name != "nt" else "cls")
     console.print(_BANNER)
-    console.print("[dim]LLM benchmark for structural engineering academics[/dim]")
+    console.print("[dim]crucible AI · LLM benchmark for structural engineering academics[/dim]")
     console.print("[dim]Colin Caprani · Monash University · github.com/ccaprani/crucible[/dim]\n")
 
 from crucible.models import list_available_models
@@ -41,9 +41,21 @@ TESTS_DIR = _PKG_ROOT / "tests"
 RESULTS_DIR = _PKG_ROOT / "results"
 
 
-def _pick_models(console: Console) -> list[str]:
+def _resolve_test_dir(raw: str | None) -> Path:
+    """Resolve the test directory, defaulting to the tracked tests/ folder."""
+    if not raw:
+        return TESTS_DIR
+    path = Path(raw)
+    if not path.is_absolute():
+        path = (Path.cwd() / path).resolve()
+    if not path.exists() or not path.is_dir():
+        raise FileNotFoundError(f"Test directory not found: {path}")
+    return path
+
+
+def _pick_models(console: Console, gguf_dir: Path | None = None) -> list[str]:
     """Interactive model picker."""
-    available = list_available_models()
+    available = list_available_models(gguf_dir)
     available = [m for m in available if "embed" not in m.lower()]
 
     if not available:
@@ -131,10 +143,10 @@ def _format_time(seconds: float) -> str:
     return f"{h}h{m:02d}m"
 
 
-def _resolve_models(raw: list[str], console: Console) -> list[str]:
+def _resolve_models(raw: list[str], console: Console, gguf_dir: Path | None = None) -> list[str]:
     """Resolve model references — accepts numbers, names, substrings, or API model names."""
     from crucible.models import is_api_model
-    available = list_available_models()
+    available = list_available_models(gguf_dir)
     available_no_embed = [m for m in available if "embed" not in m.lower()]
 
     resolved = []
@@ -188,6 +200,33 @@ def _filter_tests(tests, categories=None, test_names=None):
     return tests
 
 
+def _filter_suites(tests, suites=None):
+    """Filter tests by suite name."""
+    if suites:
+        tests = [t for t in tests if t.suite in suites]
+    return tests
+
+
+def _purge_match(entry: dict, suites=None, categories=None, test_names=None) -> bool:
+    """Return True if a stored result entry matches ALL active purge filters (AND logic).
+
+    Each filter is optional; when absent it imposes no constraint.
+    When multiple filters are active, the entry must satisfy every one.
+    """
+    if suites and entry.get("suite", "default") not in suites:
+        return False
+    if categories and entry.get("category") not in categories:
+        return False
+    if test_names:
+        haystacks = [
+            entry.get("test", ""),
+            entry.get("test_id", ""),
+        ]
+        if not any(any(token.lower() in h.lower() for h in haystacks) for token in test_names):
+            return False
+    return True
+
+
 # ── crucible list ─────────────────────────────────────────────────────
 
 
@@ -195,10 +234,12 @@ def _cmd_list(args, console: Console):
     """List models, tests, and/or previous results."""
     _clear_and_banner(console)
     what = getattr(args, "what", "all")
+    test_dir = _resolve_test_dir(getattr(args, "test_dir", None))
 
     if what in ("all", "models"):
         from crucible.models import get_model_info
-        available = list_available_models()
+        gguf_dir = getattr(args, "gguf_dir", None)
+        available = list_available_models(gguf_dir)
         available_no_embed = [m for m in available if "embed" not in m.lower()]
 
         # Gather metadata
@@ -239,22 +280,26 @@ def _cmd_list(args, console: Console):
         console.print(table)
 
     if what in ("all", "tests"):
-        tests = load_tests(TESTS_DIR)
+        tests = load_tests(test_dir)
+        suites = getattr(args, "suite", None)
+        tests = _filter_suites(tests, suites)
         console.print(f"\n[bold]Tests ({len(tests)}):[/bold]")
         current_cat = ""
         for t in tests:
-            if t.category != current_cat:
-                current_cat = t.category
+            cat_label = t.category if t.suite == "default" else f"{t.suite}/{t.category}"
+            if cat_label != current_cat:
+                current_cat = cat_label
                 console.print(f"\n  [bold cyan]{current_cat}[/bold cyan]")
             console.print(f"    {t.name}: {t.description} [dim][{t.eval_type}][/dim]")
 
     if what == "prompts":
-        tests = load_tests(TESTS_DIR)
+        tests = load_tests(test_dir)
+        tests = _filter_suites(tests, getattr(args, "suite", None))
         console.print(f"\n[bold]Test prompts ({len(tests)}):[/bold]")
         for t in tests:
             console.print(Panel(
                 t.prompt.strip(),
-                title=f"[bold]{t.category}[/bold] / {t.name}",
+                title=f"[bold]{t.suite}[/bold] / {t.category} / {t.name}" if t.suite != "default" else f"[bold]{t.category}[/bold] / {t.name}",
                 subtitle=f"[dim]{t.description}  [{t.eval_type}][/dim]",
                 title_align="left",
                 subtitle_align="left",
@@ -265,14 +310,7 @@ def _cmd_list(args, console: Console):
 
     if what in ("all", "results"):
         # Show per-model result databases
-        model_files = sorted(
-            f for f in RESULTS_DIR.glob("*.json")
-            if not f.stem[0].isdigit() and "_judged" not in f.stem
-        )
-        legacy_files = sorted(
-            (f for f in RESULTS_DIR.glob("*.json") if f.stem[0].isdigit()),
-            reverse=True,
-        )
+        model_files = sorted(RESULTS_DIR.glob("*.json"))
 
         console.print(f"\n[bold]Model results ({len(model_files)}):[/bold]")
         if not model_files:
@@ -292,11 +330,6 @@ def _cmd_list(args, console: Console):
             except Exception:
                 console.print(f"  {f.name}")
 
-        if legacy_files:
-            console.print(f"\n  [dim]Legacy run files ({len(legacy_files)}):[/dim]")
-            for f in legacy_files[:5]:
-                console.print(f"    [dim]{f.name}[/dim]")
-
     console.print()
 
 
@@ -306,16 +339,19 @@ def _cmd_list(args, console: Console):
 def _cmd_run(args, console: Console):
     """Run tests against local models."""
     _clear_and_banner(console)
+    test_dir = _resolve_test_dir(getattr(args, "test_dir", None))
     models = args.models
     categories = args.category
+    suites = args.suite
     test_names = args.test
 
     # Resolve numeric model references (e.g. -m 1 3 4)
+    gguf_dir = getattr(args, "gguf_dir", None)
     if models:
-        models = _resolve_models(models, console)
+        models = _resolve_models(models, console, gguf_dir)
     else:
         if args.interactive or not args.models:
-            models = _pick_models(console)
+            models = _pick_models(console, gguf_dir)
 
     if not categories and not test_names and args.interactive:
         categories = _pick_categories(console)
@@ -326,7 +362,8 @@ def _cmd_run(args, console: Console):
         console.print("[red]No models specified.[/red]")
         sys.exit(1)
 
-    tests = load_tests(TESTS_DIR)
+    tests = load_tests(test_dir)
+    tests = _filter_suites(tests, suites)
     tests = _filter_tests(tests, categories, test_names)
     if not tests:
         console.print("[red]No tests matched.[/red]")
@@ -340,12 +377,13 @@ def _cmd_run(args, console: Console):
 
     skip_count = len(previous_results)
 
-    # Count llm_judge tests that will be deferred
+    # Count llm_judge tests
+    from crucible.models import is_api_model as _is_api
     judge_count = sum(1 for t in tests if t.eval_type == "llm_judge")
-    if judge_count:
+    all_api = all(_is_api(m) for m in models)
+    if judge_count and not all_api:
         console.print(
-            f"[dim]{judge_count} tests use llm_judge — responses captured "
-            f"for later scoring via [bold]crucible judge[/bold][/dim]"
+            f"[dim]{judge_count} llm_judge tests — scored by Opus[/dim]"
         )
 
     total = len(tests) * len(models)
@@ -453,7 +491,7 @@ def _cmd_run(args, console: Console):
         nonlocal completed, current_model
         completed += 1
         current_model = ""
-        stream_text.clear()  # clear live response panel
+        stream_text.clear()
 
         # Incremental save — never lose completed work
         if not args.no_save:
@@ -520,6 +558,8 @@ def _cmd_run(args, console: Console):
             timeout=args.timeout,
             previous_results=previous_results,
             on_skip=on_skip,
+            test_dir=test_dir,
+            gguf_dir=getattr(args, "gguf_dir", None),
         )
 
     # Verbose: show full responses after each test
@@ -527,14 +567,17 @@ def _cmd_run(args, console: Console):
         console.print()
         n_models = len(models)
         for test in tests:
-            console.print(f"\n[bold cyan]━━━ {test.category}/{test.name} ━━━[/bold cyan]")
+            label = f"{test.category}/{test.name}"
+            if test.suite != "default":
+                label = f"{test.suite}/{label}"
+            console.print(f"\n[bold cyan]━━━ {label} ━━━[/bold cyan]")
             console.print(f"[dim]{test.description}[/dim]\n")
 
             # Build panels for each model
             panels = []
             for model in models:
                 model_results = results[model]
-                r = next((r for r in model_results if r.test.name == test.name), None)
+                r = next((r for r in model_results if r.test.test_id == test.test_id), None)
                 if r is None:
                     continue
 
@@ -579,36 +622,36 @@ def _cmd_run(args, console: Console):
         for p in model_paths:
             console.print(f"  {p}")
         console.print(f"  {md_path}")
-        if judge_count:
-            paths_str = " ".join(str(p) for p in model_paths)
-            console.print(
-                f"\n[bold]To score with Claude:[/bold] "
-                f"crucible judge {paths_str}"
-            )
 
 
 # ── crucible judge ────────────────────────────────────────────────────
 
 
 def _cmd_judge(args, console: Console):
-    """Score previously captured responses with Claude Code."""
+    """Score previously captured responses via LLM judge."""
     _clear_and_banner(console)
-    from crucible.judge import judge_results
+    test_dir = _resolve_test_dir(getattr(args, "test_dir", None))
 
-    results_path = Path(args.results_file)
-    if not results_path.exists():
-        results_path = RESULTS_DIR / args.results_file
-    if not results_path.exists():
-        console.print(f"[red]File not found: {args.results_file}[/red]")
-        console.print(f"[dim]Available results:[/dim]")
-        for f in sorted(RESULTS_DIR.glob("*.json")):
-            console.print(f"  {f.name}")
-        sys.exit(1)
-
-    judge_results(
-        results_path, console,
-        test_names=args.test,
-    )
+    if getattr(args, "judge_action", None) == "review":
+        from crucible.judge import review_judge_results
+        review_judge_results(
+            results_dir=RESULTS_DIR,
+            tests_dir=test_dir,
+            console=console,
+            model_names=args.models,
+            suite_names=args.suite,
+            test_names=args.test,
+        )
+    else:
+        from crucible.judge import judge_results
+        judge_results(
+            results_dir=RESULTS_DIR,
+            tests_dir=test_dir,
+            console=console,
+            model_names=args.models,
+            suite_names=args.suite,
+            test_names=args.test,
+        )
 
 
 # ── crucible compare ──────────────────────────────────────────────────
@@ -617,9 +660,10 @@ def _cmd_judge(args, console: Console):
 def _load_compare_data(files: list[str], console: Console) -> tuple[list[str], dict]:
     """Load result data from one or more files. Returns (models, lookup).
 
-    Handles both per-model files (new format) and legacy multi-model files.
-    lookup maps (model, test_name) → result dict.
+    lookup maps (model, test_id) → result dict.
     """
+    from crucible.report import result_test_id
+
     lookup = {}
     models_seen = []
 
@@ -637,20 +681,11 @@ def _load_compare_data(files: list[str], console: Console) -> tuple[list[str], d
         with open(path) as f:
             data = json.load(f)
 
-        if "model" in data and "results" in data:
-            # Per-model format
-            model = data["model"]
-            if model not in models_seen:
-                models_seen.append(model)
-            for entry in data["results"]:
-                lookup[(model, entry["test"])] = entry
-        elif "models" in data:
-            # Legacy multi-model format
-            for model, entries in data["models"].items():
-                if model not in models_seen:
-                    models_seen.append(model)
-                for entry in entries:
-                    lookup[(model, entry["test"])] = entry
+        model = data["model"]
+        if model not in models_seen:
+            models_seen.append(model)
+        for entry in data["results"]:
+            lookup[(model, result_test_id(entry))] = entry
 
     return models_seen, lookup
 
@@ -662,8 +697,7 @@ def _cmd_compare(args, console: Console):
 
     # If no files given, auto-load all per-model DBs in results/
     if not files:
-        files = [str(f) for f in sorted(RESULTS_DIR.glob("*.json"))
-                 if not f.stem[0].isdigit() and "_judged" not in f.stem]
+        files = [str(f) for f in sorted(RESULTS_DIR.glob("*.json"))]
         if not files:
             console.print("[red]No result files found.[/red]")
             sys.exit(1)
@@ -682,39 +716,47 @@ def _cmd_compare(args, console: Console):
         models = all_models
 
     # Get all test names across selected models
-    all_tests_set: dict[str, str] = {}  # test_name → category
-    for (model, test_name), entry in lookup.items():
-        if test_name not in all_tests_set:
-            all_tests_set[test_name] = entry.get("category", "")
-    all_tests = [(cat, name) for name, cat in all_tests_set.items()]
+    all_tests_set: dict[str, tuple[str, str]] = {}  # test_id → (suite, category)
+    for (_model, test_id), entry in lookup.items():
+        if test_id not in all_tests_set:
+            all_tests_set[test_id] = (entry.get("suite", "default"), entry.get("category", ""))
+    all_tests = [(suite, cat, test_id) for test_id, (suite, cat) in all_tests_set.items()]
 
     # Filter by category and/or test name
     filtered = all_tests
+    if args.suite:
+        filtered = [(s, c, t) for s, c, t in filtered if s in args.suite]
     if args.category:
-        filtered = [(c, t) for c, t in filtered if c in args.category]
+        filtered = [(s, c, t) for s, c, t in filtered if c in args.category]
     if args.test:
         new_filtered = []
-        for c, t in filtered:
+        for s, c, t in filtered:
             for name in args.test:
                 if name.lower() in t.lower():
-                    new_filtered.append((c, t))
+                    new_filtered.append((s, c, t))
                     break
         filtered = new_filtered
 
     if not filtered:
         console.print("[red]No tests matched.[/red]")
         console.print("[dim]Available tests:[/dim]")
-        for cat, name in all_tests:
-            console.print(f"  {cat}/{name}")
+        for suite, cat, test_id in all_tests:
+            label = f"{cat}/{test_id.split('/')[-1]}"
+            if suite != "default":
+                label = f"{suite}/{label}"
+            console.print(f"  {label}")
         sys.exit(1)
 
     # Display each matched test
     n_models = len(models)
-    for cat, test_name in filtered:
-        console.print(f"\n[bold cyan]━━━ {cat}/{test_name} ━━━[/bold cyan]")
+    for suite, cat, test_id in filtered:
+        label = f"{cat}/{test_id.split('/')[-1]}"
+        if suite != "default":
+            label = f"{suite}/{label}"
+        console.print(f"\n[bold cyan]━━━ {label} ━━━[/bold cyan]")
 
         # Show the prompt if stored in results
-        first = lookup.get((models[0], test_name), {})
+        first = lookup.get((models[0], test_id), {})
         prompt = first.get("prompt", "")
         if prompt:
             console.print(Panel(
@@ -729,7 +771,7 @@ def _cmd_compare(args, console: Console):
         # Build panels for each model
         panels = []
         for model in models:
-            r = lookup.get((model, test_name))
+            r = lookup.get((model, test_id))
             if not r:
                 continue
             score_str = f"{r['score']:.0%}" if r['score'] is not None else "—"
@@ -759,9 +801,103 @@ def _cmd_compare(args, console: Console):
         else:
             for panel in panels:
                 panel.width = min(console.width, 120)
-                console.print(panel)
+        console.print(panel)
 
         console.print()
+
+
+def _cmd_purge(args, console: Console):
+    """Remove selected stored result entries from per-model JSON databases."""
+    _clear_and_banner(console)
+
+    model_files = sorted(RESULTS_DIR.glob("*.json"))
+    if not model_files:
+        console.print("[red]No result files found in results/[/red]")
+        sys.exit(1)
+
+    available_models = []
+    for path in model_files:
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            available_models.append(data.get("model", path.stem))
+        except Exception:
+            continue
+
+    if args.models:
+        selected_models = _filter_report_models(args.models, available_models, console)
+    else:
+        selected_models = available_models
+
+    dry_run = not args.yes
+    removed_total = 0
+    changed_files = 0
+
+    console.print(f"[bold]Scanning {len(selected_models)} model result database(s)[/bold]")
+    if args.suite:
+        console.print(f"[dim]Suites:[/dim] {', '.join(args.suite)}")
+    if args.category:
+        console.print(f"[dim]Categories:[/dim] {', '.join(args.category)}")
+    if args.test:
+        console.print(f"[dim]Test filter:[/dim] {', '.join(args.test)}")
+    console.print(f"[dim]Mode:[/dim] {'dry run' if dry_run else 'purge'}\n")
+
+    for path in model_files:
+        try:
+            with open(path) as f:
+                data = json.load(f)
+        except Exception:
+            console.print(f"[yellow]Skipping unreadable file:[/yellow] {path.name}")
+            continue
+
+        model = data.get("model", path.stem)
+        if model not in selected_models:
+            continue
+
+        results = data.get("results", [])
+        kept = []
+        removed = []
+        for entry in results:
+            if _purge_match(entry, args.suite, args.category, args.test):
+                removed.append(entry)
+            else:
+                kept.append(entry)
+
+        if not removed:
+            continue
+
+        changed_files += 1
+        removed_total += len(removed)
+        console.print(f"[cyan]{model}[/cyan]: {len(removed)} entr{'y' if len(removed) == 1 else 'ies'} matched")
+        for entry in removed[:8]:
+            label = entry.get("test_id", entry.get("test", "<unknown>"))
+            console.print(f"  [dim]- {label}[/dim]")
+        if len(removed) > 8:
+            console.print(f"  [dim]... and {len(removed) - 8} more[/dim]")
+
+        if not dry_run:
+            data["results"] = kept
+            with open(path, "w") as f:
+                json.dump(data, f, indent=2)
+
+    console.print()
+    if changed_files == 0:
+        console.print("[yellow]No stored results matched the selected filters.[/yellow]")
+        return
+
+    if dry_run:
+        console.print(
+            f"[bold yellow]Dry run only.[/bold yellow] "
+            f"{removed_total} entr{'y' if removed_total == 1 else 'ies'} would be removed "
+            f"across {changed_files} file(s)."
+        )
+        console.print("[dim]Re-run with --yes to apply the purge.[/dim]")
+    else:
+        console.print(
+            f"[bold green]Purged[/bold green] "
+            f"{removed_total} entr{'y' if removed_total == 1 else 'ies'} "
+            f"across {changed_files} file(s)."
+        )
 
 
 
@@ -883,8 +1019,7 @@ def _cmd_report(args, console: Console):
 
     files = args.results_files
     if not files:
-        files = [str(f) for f in sorted(RESULTS_DIR.glob("*.json"))
-                 if not f.stem[0].isdigit() and "_judged" not in f.stem]
+        files = [str(f) for f in sorted(RESULTS_DIR.glob("*.json"))]
         if not files:
             console.print("[red]No result files found in results/[/red]")
             sys.exit(1)
@@ -902,6 +1037,16 @@ def _cmd_report(args, console: Console):
         lookup = {k: v for k, v in lookup.items() if k[0] in models}
     else:
         models = all_models
+
+    if args.suite:
+        lookup = {
+            k: v for k, v in lookup.items()
+            if v.get("suite", "default") in args.suite
+        }
+
+    if not lookup:
+        console.print("[red]No results matched the selected filters.[/red]")
+        sys.exit(1)
 
     # Fetch model metadata from Ollama (if available)
     model_infos = {}
@@ -943,10 +1088,20 @@ def main():
     list_p.add_argument("what", nargs="?", default="all",
                         choices=["all", "models", "tests", "prompts", "results"],
                         help="What to list (default: all)")
+    list_p.add_argument("--test-dir", default=None,
+                        help="Test directory to load (default: tracked tests/)")
+    list_p.add_argument("--suite", "-s", nargs="+",
+                        help="Filter by suite (e.g. default tier2 personas)")
+    list_p.add_argument("--gguf-dir", type=Path, default=None,
+                        help="Directory containing GGUF model files (default: ~/models)")
 
     # --- crucible run ---
     run_p = subparsers.add_parser("run", help="Run tests against models")
     run_p.add_argument("--models", "-m", nargs="+")
+    run_p.add_argument("--test-dir", default=None,
+                       help="Test directory to load (default: tracked tests/)")
+    run_p.add_argument("--suite", "-s", nargs="+",
+                       help="Filter by suite (e.g. default tier2 personas)")
     run_p.add_argument("--category", "-c", nargs="+",
                        help="Filter by category (e.g. code_generation reasoning)")
     run_p.add_argument("--test", "-n", nargs="+",
@@ -961,13 +1116,29 @@ def main():
                        help="Show full model responses after each test")
     run_p.add_argument("--fresh", action="store_true",
                        help="Ignore previous results and re-run all tests")
+    run_p.add_argument("--gguf-dir", type=Path, default=None,
+                       help="Directory containing GGUF model files (default: ~/models)")
 
     # --- crucible judge ---
-    judge_p = subparsers.add_parser("judge", help="Score responses with Claude Code")
-    judge_p.add_argument("results_file",
-                         help="Results JSON path (or filename in results/)")
-    judge_p.add_argument("--test", "-n", nargs="+",
-                         help="Only judge these tests (substring match)")
+    judge_p = subparsers.add_parser("judge", help="Score llm_judge tests via Opus")
+    judge_sub = judge_p.add_subparsers(dest="judge_action")
+    judge_p.add_argument("--test-dir", default=None,
+                         help="Test directory to load definitions from (default: tracked tests/)")
+    judge_p.add_argument("-m", "--models", nargs="+",
+                         help="Filter models to judge (substring match)")
+    judge_p.add_argument("-s", "--suite", nargs="+",
+                         help="Filter suites to judge")
+    judge_p.add_argument("-n", "--test", nargs="+",
+                         help="Filter tests to judge (substring match)")
+
+    # crucible judge review
+    review_p = judge_sub.add_parser("review", help="Show judge reasoning for scored tests")
+    review_p.add_argument("-m", "--models", nargs="+",
+                          help="Filter models (substring match)")
+    review_p.add_argument("-s", "--suite", nargs="+",
+                          help="Filter suites")
+    review_p.add_argument("-n", "--test", nargs="+",
+                          help="Filter tests (substring match)")
 
     # --- crucible compare ---
     cmp_p = subparsers.add_parser("compare", help="Side-by-side response comparison")
@@ -975,10 +1146,25 @@ def main():
                        help="Result JSON files (default: all per-model files in results/)")
     cmp_p.add_argument("-m", "--models", nargs="+",
                        help="Models to compare (number, name, or substring)")
+    cmp_p.add_argument("--suite", "-s", nargs="+",
+                       help="Filter by suite")
     cmp_p.add_argument("--category", "-c", nargs="+",
                        help="Filter by category")
     cmp_p.add_argument("--test", "-n", nargs="+",
                        help="Filter by test name (substring match)")
+
+    # --- crucible purge ---
+    purge_p = subparsers.add_parser("purge", help="Remove selected stored results")
+    purge_p.add_argument("-m", "--models", nargs="+",
+                         help="Models to purge (number, name, or substring — default: all)")
+    purge_p.add_argument("-s", "--suite", nargs="+",
+                         help="Filter purge to suites")
+    purge_p.add_argument("-c", "--category", nargs="+",
+                         help="Filter purge to categories")
+    purge_p.add_argument("-n", "--test", nargs="+",
+                         help="Filter purge by test name or test_id substring")
+    purge_p.add_argument("--yes", action="store_true",
+                         help="Apply the purge (default is dry run)")
 
     # --- crucible register ---
     reg_p = subparsers.add_parser("register", help="Store API keys for providers")
@@ -992,6 +1178,8 @@ def main():
                           help="Result JSON files (default: all per-model files in results/)")
     report_p.add_argument("-m", "--models", nargs="+",
                           help="Models to include (number, name, or substring — default: all)")
+    report_p.add_argument("-s", "--suite", nargs="+",
+                          help="Filter report to suites")
     report_p.add_argument("-o", "--output", default=None,
                           help="Output HTML path (default: results/report.html)")
     report_p.add_argument("--title", default="Crucible Benchmark Report",
@@ -1000,7 +1188,7 @@ def main():
                           help="Don't auto-open in browser")
 
     # If no subcommand given, default to `run` (supports bare `crucible -m 1 2`)
-    known_commands = {"list", "run", "judge", "compare", "register", "report"}
+    known_commands = {"list", "run", "judge", "compare", "purge", "register", "report"}
     argv = sys.argv[1:]
     if argv and argv[0] not in known_commands and not argv[0].startswith("-h"):
         # Looks like flags without a subcommand — treat as `run`
@@ -1018,6 +1206,8 @@ def main():
         _cmd_judge(args, console)
     elif args.command == "compare":
         _cmd_compare(args, console)
+    elif args.command == "purge":
+        _cmd_purge(args, console)
     elif args.command == "register":
         _cmd_register(args, console)
     elif args.command == "report":

@@ -1,9 +1,43 @@
-results/
+# Python
 __pycache__/
 *.pyc
 .venv/
 dist/
 *.egg-info/
+
+# Secrets
 keys.json
 *.key
 .env
+
+# Results (per-model JSON databases, generated reports)
+results/
+
+# Private test suites (not for public distribution)
+tests_private/
+tests_local/
+
+# Paper development (kept in sync/Research/Writings/Papers/2026/)
+paper_dev/
+.paper/
+prompt_dev/
+refs/
+
+# Documentation build artefacts
+docs/_build/
+docs/api/generated/
+
+# Campaign scripts (local use only)
+run_local_campaign.sh
+run_full_campaign.sh
+
+# Stray scratch files
+beam.py
+bmd_vec.py
+section_props.py
+test_bmd.py
+failure_probability.py
+texput.log
+
+# Claude Code
+.claude/

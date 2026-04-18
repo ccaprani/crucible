@@ -327,24 +327,18 @@ def _get_anthropic_client():
 
 
 def _eval_llm_judge(response: str, config: dict, prompt: str) -> EvalResult:
-    """Use Claude Opus to evaluate response quality.
+    """Use an LLM to evaluate response quality.
+
+    Tries (in order): Claude CLI -p (subscription), OpenRouter, Anthropic API.
+    Primary judge: Claude Opus 4.6, max effort, with extended thinking.
 
     config keys:
         criteria: str — what the judge should evaluate (domain-specific rubric)
         model: str — judge model (default: claude-opus-4-6)
     """
-    client = _get_anthropic_client()
-    if client is None:
-        return EvalResult(
-            0.5, True,
-            "LLM judge unavailable (no API key). "
-            "Set ANTHROPIC_API_KEY or create ~/.config/anthropic/api_key",
-        )
-
     criteria = config.get("criteria", "overall quality, accuracy, and completeness")
-    judge_model = config.get("model", "claude-opus-4-6")
 
-    judge_prompt = f"""You are an expert evaluator for AI model responses. Score the following response on a scale of 0-10.
+    judge_prompt = f"""You are an expert structural engineering evaluator scoring an AI model's response. Think carefully and deeply about the response quality before scoring.
 
 ORIGINAL TASK:
 {prompt}
@@ -355,18 +349,86 @@ EVALUATION CRITERIA:
 RESPONSE TO EVALUATE:
 {response}
 
-Respond with ONLY valid JSON in this exact format:
-{{"score": <0-10>, "reasoning": "<2-3 sentences explaining the score>"}}"""
+First reason through the evaluation criteria carefully. Consider what the response gets right, what it gets wrong, and what it misses. Then provide your score and reasoning.
 
+Respond with ONLY valid JSON in this exact format:
+{{"score": <0-10>, "reasoning": "<detailed explanation of the score, referencing specific strengths and weaknesses>"}}"""
+
+    # 1. Claude CLI -p with extended thinking (uses existing subscription)
     try:
-        result = client.messages.create(
-            model=judge_model,
-            max_tokens=300,
-            temperature=0.0,
-            messages=[{"role": "user", "content": judge_prompt}],
-        )
-        text = result.content[0].text.strip()
-        parsed = json.loads(text)
+        import shutil
+        claude_bin = shutil.which("claude")
+        if claude_bin:
+            result = subprocess.run(
+                [
+                    claude_bin, "-p",
+                    "--model", "claude-opus-4-6",
+                    "--effort", "max",
+                    "--bare",  # skip hooks/plugins for judge calls
+                ],
+                input=judge_prompt,
+                capture_output=True,
+                text=True,
+                timeout=300,  # longer timeout for deep thinking
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return _parse_judge_response(result.stdout.strip(), "claude-opus-4-6 (CLI)")
+    except Exception:
+        pass
+
+    # 2. OpenRouter (pay-per-token, registered key)
+    try:
+        from crucible.run import get_api_key
+        or_key = get_api_key("openrouter")
+        if or_key:
+            from openai import OpenAI
+            or_client = OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=or_key,
+            )
+            judge_model = config.get("model", "anthropic/claude-opus-4-6")
+            result = or_client.chat.completions.create(
+                model=judge_model,
+                max_tokens=1024,
+                temperature=0.0,
+                messages=[{"role": "user", "content": judge_prompt}],
+            )
+            text = result.choices[0].message.content.strip()
+            return _parse_judge_response(text, judge_model)
+    except Exception:
+        pass
+
+    # 3. Anthropic API (pay-per-token, env var or config file)
+    client = _get_anthropic_client()
+    if client is not None:
+        judge_model = config.get("model", "claude-opus-4-6")
+        try:
+            result = client.messages.create(
+                model=judge_model,
+                max_tokens=1024,
+                temperature=0.0,
+                messages=[{"role": "user", "content": judge_prompt}],
+            )
+            text = result.content[0].text.strip()
+            return _parse_judge_response(text, judge_model)
+        except Exception:
+            pass
+
+    return EvalResult(
+        0.5, True,
+        "LLM judge unavailable (no Claude CLI, OpenRouter, or Anthropic key)",
+    )
+
+
+def _parse_judge_response(text: str, judge_model: str) -> EvalResult:
+    """Parse a judge LLM's JSON response into an EvalResult."""
+    try:
+        # Extract JSON — might be wrapped in markdown fences
+        json_match = re.search(r"\{[^}]+\}", text)
+        if json_match:
+            parsed = json.loads(json_match.group())
+        else:
+            parsed = json.loads(text)
         score_raw = parsed["score"]
         reasoning = parsed["reasoning"]
         score = max(0.0, min(1.0, score_raw / 10.0))
@@ -375,11 +437,8 @@ Respond with ONLY valid JSON in this exact format:
             score >= 0.6,
             f"Judge ({judge_model}): {score_raw}/10 — {reasoning}",
         )
-    except (json.JSONDecodeError, KeyError, IndexError) as e:
-        # Try to extract score from non-JSON response
-        return EvalResult(0.5, True, f"Judge response parse error: {e}. Raw: {text[:200]}")
-    except Exception as e:
-        return EvalResult(0.5, True, f"Judge API error: {e}")
+    except (json.JSONDecodeError, KeyError) as e:
+        return EvalResult(0.5, True, f"Judge parse error: {e}. Raw: {text[:200]}")
 
 
 def _eval_manual(response: str, config: dict) -> EvalResult:

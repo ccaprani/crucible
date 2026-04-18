@@ -5,13 +5,61 @@ build-backend = "hatchling.build"
 [project]
 name = "crucible-ai"
 version = "0.1.0"
-description = "Bespoke benchmarking tool for comparing local AI models via Ollama"
+description = "Domain-specific benchmarking toolkit for comparing AI systems across bespoke workflows"
 requires-python = ">=3.10"
+readme = "README.md"
+license = { file = "LICENCE" }
+authors = [
+    { name = "Colin Caprani", email = "colin.caprani@monash.edu" },
+]
+keywords = [
+    "benchmarking",
+    "llm",
+    "ai",
+    "evaluation",
+    "structural-engineering",
+    "ollama",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Utilities",
+]
 dependencies = [
     "ollama",
     "rich",
     "pyyaml",
     "anthropic",
+    "openai",
+]
+
+[project.urls]
+Homepage = "https://github.com/ccaprani/crucible"
+Documentation = "https://ccaprani.github.io/crucible/"
+Repository = "https://github.com/ccaprani/crucible"
+Issues = "https://github.com/ccaprani/crucible/issues"
+
+[project.optional-dependencies]
+docs = [
+    "sphinx>=8",
+    "myst-parser>=4",
+    "shibuya>=2025.9.1",
+    "sphinx-copybutton>=0.5",
+]
+dev = [
+    "build>=1.2",
+    "pytest>=8",
+    "twine>=6",
 ]
 
 [tool.hatch.build.targets.wheel]

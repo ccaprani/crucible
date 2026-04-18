@@ -36,13 +36,28 @@ def _model_filename(model: str) -> str:
     return model.replace(":", "_").replace("/", "_")
 
 
+def result_test_id(entry: dict) -> str:
+    """Return stable result identity from stored result data.
+
+    Handles legacy entries that only have 'test' and 'category' fields
+    by synthesising a test_id in the current suite/category/name format.
+    """
+    if "test_id" in entry:
+        return entry["test_id"]
+    # Legacy fallback: reconstruct from category + test name
+    suite = entry.get("suite", "default")
+    category = entry.get("category", "unknown")
+    name = entry.get("test", "unknown")
+    return f"{suite}/{category}/{name}"
+
+
 # ── Per-model result database ────────────────────────────────────────
 
 
 def load_model_results(results_dir: Path, model: str) -> dict[str, dict]:
     """Load the result database for a single model.
 
-    Returns dict mapping test_name → result entry.
+    Returns dict mapping test_id → result entry.
     """
     path = results_dir / f"{_model_filename(model)}.json"
     if not path.exists():
@@ -50,7 +65,7 @@ def load_model_results(results_dir: Path, model: str) -> dict[str, dict]:
     try:
         with open(path) as f:
             data = json.load(f)
-        return {entry["test"]: entry for entry in data.get("results", [])}
+        return {result_test_id(entry): entry for entry in data.get("results", [])}
     except (json.JSONDecodeError, KeyError, OSError):
         return {}
 
@@ -70,7 +85,7 @@ def save_model_results(
         try:
             with open(path) as f:
                 data = json.load(f)
-            existing = {entry["test"]: entry for entry in data.get("results", [])}
+            existing = {result_test_id(entry): entry for entry in data.get("results", [])}
         except (json.JSONDecodeError, KeyError, OSError):
             pass
 
@@ -80,7 +95,9 @@ def save_model_results(
     # Update with new results
     for r in results:
         entry = {
+            "test_id": r.test.test_id,
             "test": r.test.name,
+            "suite": r.test.suite,
             "category": r.test.category,
             "prompt": r.test.prompt.strip(),
             "prompt_hash": _prompt_hash(r.test.prompt),
@@ -99,9 +116,14 @@ def save_model_results(
         }
         if r.model_response.thinking_tokens:
             entry["thinking_tokens"] = r.model_response.thinking_tokens
+            if r.model_response.total_time > 0:
+                entry["total_tokens_per_sec"] = round(
+                    (r.model_response.completion_tokens + r.model_response.thinking_tokens)
+                    / r.model_response.total_time, 1
+                )
         if r.reused:
             entry["reused"] = True
-        existing[r.test.name] = entry
+        existing[r.test.test_id] = entry
 
     # Write back
     out = {
@@ -123,52 +145,29 @@ def load_previous_results(
 ) -> dict[tuple[str, str], dict]:
     """Load previous passing results for given models, checking prompt staleness.
 
-    Returns dict mapping (model_name, test_name) → result entry,
+    Returns dict mapping (model_name, test_id) → result entry,
     only for entries where:
       - the test previously passed
       - the prompt hash still matches (question hasn't been edited)
     """
     # Build current prompt hashes from test definitions
-    current_hashes = {t.name: _prompt_hash(t.prompt) for t in tests}
+    current_hashes = {t.test_id: _prompt_hash(t.prompt) for t in tests}
     test_names = set(current_hashes.keys())
 
     cache: dict[tuple[str, str], dict] = {}
 
     for model in models:
         db = load_model_results(results_dir, model)
-        for test_name, entry in db.items():
-            if test_name not in test_names:
+        for test_id, entry in db.items():
+            if test_id not in test_names:
                 continue
             if not entry.get("passed", False):
                 continue
             # Check staleness — prompt edited since last run?
             stored_hash = entry.get("prompt_hash", "")
-            if stored_hash and stored_hash != current_hashes[test_name]:
+            if stored_hash and stored_hash != current_hashes[test_id]:
                 continue  # stale — prompt changed, re-run
-            cache[(model, test_name)] = entry
-
-    # Also scan legacy timestamped files for backward compatibility
-    for json_file in sorted(results_dir.glob("*.json"), reverse=True):
-        stem = json_file.stem
-        # Skip per-model DB files and judged files
-        if "_judged" in stem or not stem[0].isdigit():
-            continue
-        try:
-            with open(json_file) as f:
-                data = json.load(f)
-            for model_name, entries in data.get("models", {}).items():
-                if model_name not in models:
-                    continue
-                for entry in entries:
-                    key = (model_name, entry["test"])
-                    if key in cache or entry["test"] not in test_names:
-                        continue
-                    if not entry.get("passed", False):
-                        continue
-                    # Legacy files don't have prompt_hash — accept them
-                    cache[key] = entry
-        except (json.JSONDecodeError, KeyError, OSError):
-            continue
+            cache[(model, test_id)] = entry
 
     return cache
 
@@ -192,10 +191,10 @@ def print_summary(
     # Group tests by category
     categories: dict[str, list[str]] = {}
     for result in results[models[0]]:
-        cat = result.test.category
+        cat = result.test.category if result.test.suite == "default" else f"{result.test.suite}/{result.test.category}"
         if cat not in categories:
             categories[cat] = []
-        categories[cat].append(result.test.name)
+        categories[cat].append(result.test.test_id)
 
     # Summary table
     table = Table(
@@ -213,15 +212,16 @@ def print_summary(
     lookup: dict[tuple[str, str], TestResult] = {}
     for model, model_results in results.items():
         for r in model_results:
-            lookup[(model, r.test.name)] = r
+            lookup[(model, r.test.test_id)] = r
 
-    for cat, test_names in categories.items():
-        for i, test_name in enumerate(test_names):
+    for cat, test_ids in categories.items():
+        for i, test_id in enumerate(test_ids):
             cat_label = cat.replace("_", " ").title() if i == 0 else ""
-            row = [cat_label, test_name]
+            test_label = test_id.split("/")[-1]
+            row = [cat_label, test_label]
 
             for model in models:
-                r = lookup.get((model, test_name))
+                r = lookup.get((model, test_id))
                 if r is None:
                     row.append("—")
                     continue
@@ -347,7 +347,10 @@ def _build_markdown(results: dict[str, list[TestResult]], timestamp: str) -> str
 
     # Assume all models ran same tests in same order
     for i, r in enumerate(results[models[0]]):
-        row = f"| {r.test.category}/{r.test.name} |"
+        label = f"{r.test.category}/{r.test.name}"
+        if r.test.suite != "default":
+            label = f"{r.test.suite}/{label}"
+        row = f"| {label} |"
         for model in models:
             mr = results[model][i]
             icon = "✓" if mr.eval_result.passed else "✗"
@@ -361,7 +364,10 @@ def _build_markdown(results: dict[str, list[TestResult]], timestamp: str) -> str
     lines.append("")
 
     for i, r0 in enumerate(results[models[0]]):
-        lines.append(f"### {r0.test.category}/{r0.test.name}")
+        label = f"{r0.test.category}/{r0.test.name}"
+        if r0.test.suite != "default":
+            label = f"{r0.test.suite}/{label}"
+        lines.append(f"### {label}")
         lines.append("")
         lines.append(f"**Description:** {r0.test.description}")
         lines.append("")
@@ -418,15 +424,19 @@ def generate_html_report(
     if model_infos is None:
         model_infos = {}
     # ── Gather all tests and categories ──
-    all_tests: dict[str, str] = {}  # test_name → category
-    for (model, test_name), entry in lookup.items():
-        if test_name not in all_tests:
-            all_tests[test_name] = entry.get("category", "unknown")
+    all_tests: dict[str, tuple[str, str]] = {}  # test_id → (suite, category)
+    for (model, test_id), entry in lookup.items():
+        if test_id not in all_tests:
+            all_tests[test_id] = (
+                entry.get("suite", "default"),
+                entry.get("category", "unknown"),
+            )
 
     # Sort tests by category then name
-    sorted_tests = sorted(all_tests.items(), key=lambda x: (x[1], x[0]))
+    sorted_tests = sorted(all_tests.items(), key=lambda x: (x[1][0], x[1][1], x[0]))
     test_names = [t[0] for t in sorted_tests]
-    categories = sorted(set(all_tests.values()))
+    categories = sorted(set(cat for _suite, cat in all_tests.values()))
+    suites = sorted(set(suite for suite, _cat in all_tests.values()))
 
     # ── Compute data for charts ──
 
@@ -434,7 +444,7 @@ def generate_html_report(
     cat_scores: dict[str, dict[str, float]] = {m: {} for m in models}
     for model in models:
         for cat in categories:
-            cat_tests = [t for t, c in all_tests.items() if c == cat]
+            cat_tests = [t for t, (_suite, c) in all_tests.items() if c == cat]
             scores = [lookup[(model, t)]["score"] for t in cat_tests if (model, t) in lookup]
             cat_scores[model][cat] = sum(scores) / len(scores) if scores else 0
 
@@ -494,11 +504,13 @@ def generate_html_report(
     # ── Build the JSON data blob for JS ──
     chart_data = json.dumps({
         "models": models,
+        "suites": suites,
         "categories": [c.replace("_", " ").title() for c in categories],
         "categoriesRaw": categories,
         "testNames": test_names,
         "testLabels": [t.replace("_", " ") for t in test_names],
-        "testCategories": [all_tests[t].replace("_", " ").title() for t in test_names],
+        "testCategories": [all_tests[t][1].replace("_", " ").title() for t in test_names],
+        "testSuites": [all_tests[t][0] for t in test_names],
         "catScores": cat_scores,
         "passRates": pass_rates,
         "testScores": test_scores,

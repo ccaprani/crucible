@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="64" viewBox="0 0 320 64" fill="none">
+  <rect x="4" y="8" width="48" height="48" rx="12" fill="#111827"/>
+  <path d="M18 39.5L28.5 21L39 39.5H18Z" fill="#D94F04"/>
+  <path d="M24 43H33.5" stroke="#FFB36B" stroke-width="3.5" stroke-linecap="round"/>
+  <text x="70" y="40" fill="#111827" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="30" font-weight="700">crucible</text>
+</svg>

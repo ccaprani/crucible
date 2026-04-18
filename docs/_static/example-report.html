@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crucible Benchmark Report</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  :root {
+    --bg: #0f0f1a;
+    --card: #1a1a2e;
+    --card-border: #2a2a4a;
+    --text: #e8e8f0;
+    --text-dim: #8888aa;
+    --accent: #4dc9f6;
+    --green: #4caf50;
+    --red: #ef5350;
+    --yellow: #ffc107;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    padding: 24px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  header {
+    text-align: center;
+    margin-bottom: 32px;
+    padding: 32px 0;
+    border-bottom: 1px solid var(--card-border);
+  }
+  header h1 {
+    font-size: 2.2rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent), #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 8px;
+  }
+  header .subtitle {
+    color: var(--text-dim);
+    font-size: 0.95rem;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+    gap: 20px;
+    margin-bottom: 20px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: 24px;
+  }
+  .card h2 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-dim);
+    margin-bottom: 16px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-size: 0.85rem;
+  }
+  .card.wide { grid-column: 1 / -1; }
+  .card.hero { grid-column: 1 / -1; }
+  .hero-inner {
+    display: flex;
+    gap: 32px;
+    align-items: flex-start;
+  }
+  .hero-inner .chart-wrap {
+    flex: 0 0 480px;
+    max-height: 420px;
+  }
+  .summary-cards {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    align-content: start;
+  }
+  .model-card {
+    background: var(--bg);
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    padding: 16px;
+    text-align: center;
+    border-top: 3px solid var(--accent);
+  }
+  .model-card .name {
+    font-weight: 600;
+    font-size: 0.95rem;
+    margin-bottom: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .model-card .stat {
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    margin: 4px 0;
+  }
+  .model-card .big {
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin: 4px 0;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+  th {
+    background: var(--bg);
+    color: var(--text-dim);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 0.5px;
+    padding: 10px 12px;
+    text-align: left;
+    position: sticky;
+    top: 0;
+  }
+  td {
+    padding: 8px 12px;
+    border-top: 1px solid var(--card-border);
+  }
+  tr:hover td { background: rgba(77, 201, 246, 0.05); }
+  .pass { color: var(--green); font-weight: 600; }
+  .fail { color: var(--red); font-weight: 600; }
+  .score-cell { text-align: center; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .badge-pass { background: rgba(76, 175, 80, 0.15); color: var(--green); }
+  .badge-fail { background: rgba(239, 83, 80, 0.15); color: var(--red); }
+  .badge-tier {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    background: rgba(77, 201, 246, 0.12);
+    color: var(--accent);
+    letter-spacing: 0.3px;
+  }
+  footer {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    margin-top: 32px;
+    padding-top: 16px;
+    border-top: 1px solid var(--card-border);
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+  .filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 24px;
+    padding: 16px 20px;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+  }
+  .filter-bar .label {
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-right: 8px;
+  }
+  .filter-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--card-border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: all 0.15s;
+    user-select: none;
+  }
+  .filter-btn:hover { border-color: var(--accent); }
+  .filter-btn.active {
+    border-color: var(--accent);
+    background: rgba(77, 201, 246, 0.1);
+  }
+  .filter-btn .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .filter-btn .tier-tag {
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    font-weight: 600;
+  }
+  .filter-tier-btns {
+    margin-left: auto;
+    display: flex;
+    gap: 6px;
+  }
+  .tier-btn {
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--card-border);
+    background: var(--bg);
+    color: var(--text-dim);
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .tier-btn:hover { border-color: var(--accent); color: var(--text); }
+  .tier-btn.active { border-color: var(--accent); background: rgba(77, 201, 246, 0.1); color: var(--accent); }
+  @media (max-width: 600px) {
+    .grid { grid-template-columns: 1fr; }
+    .hero-inner { flex-direction: column; }
+    .hero-inner .chart-wrap { flex: 1; max-width: 100%; }
+    body { padding: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Crucible Benchmark Report</h1>
+  <p class="subtitle">Colin Caprani &middot; Monash University</p>
+  <p class="subtitle" style="margin-top:6px">Generated 2026-04-08 18:15 &middot; 18 models &middot; 20 tests</p>
+  <p class="subtitle" style="margin-top:2px">Radeon RX 7900 XTX (24GB) &middot; AMD Ryzen 9 9950X 16-Core Processor &middot; 92GB RAM</p>
+</header>
+
+<div class="filter-bar" id="filterBar">
+  <span class="label">Models</span>
+  <div id="modelFilters"></div>
+  <div class="filter-tier-btns" id="tierFilters"></div>
+</div>
+
+<!-- Hero: radar + model summary cards -->
+<div class="card hero">
+  <h2>Category Performance</h2>
+  <div class="hero-inner">
+    <div class="chart-wrap">
+      <canvas id="radarChart"></canvas>
+    </div>
+    <div class="summary-cards" id="summaryCards"></div>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h2>Pass Rate by Model</h2>
+    <canvas id="passRateChart"></canvas>
+  </div>
+  <div class="card">
+    <h2>Generation Speed (tk/s)</h2>
+    <canvas id="perfChart"></canvas>
+  </div>
+</div>
+
+<div class="card wide">
+  <h2>Per-Test Scores</h2>
+  <canvas id="testScoresChart" style="max-height:400px;"></canvas>
+</div>
+
+<div class="card wide">
+  <h2>Full Results</h2>
+  <div style="overflow-x:auto;">
+    <table id="resultsTable"></table>
+  </div>
+</div>
+
+<footer>
+  Crucible &mdash; LLM benchmark for structural engineering academics<br>
+  Colin Caprani &middot; Monash University &middot;
+  <a href="https://github.com/ccaprani/crucible">github.com/ccaprani/crucible</a>
+</footer>
+
+<script>
+const D = {"models": ["claude-opus-4-6", "deepseek-coder:6.7b", "gemma3:1b", "gemma4:26b", "gemma4:31b", "lfm2:24b", "llama3.1:8b", "llama3:latest", "mistral-nemo:latest", "phi3.5:latest", "qwen2.5-coder:1.5b-base", "qwen2.5:14b-instruct", "qwen3.5:27b", "qwen3:0.6b", "qwen3:1.7b", "qwen3:14b", "qwen3:30b-a3b", "qwen3:4b"], "categories": ["Code Generation", "Generic Benchmarks", "Reasoning", "Summarization", "Technical Writing"], "categoriesRaw": ["code_generation", "generic_benchmarks", "reasoning", "summarization", "technical_writing"], "testNames": ["numpy_vectorisation", "pytest_suite", "reliability_pf", "section_properties", "code_fizzbuzz_variant", "gsm8k_arithmetic", "logic_puzzle", "text_extraction", "beam_design_as3600", "dependency_resolution", "load_combination_stats", "supervision_triage", "abstract_distillation", "code_clause_extraction", "meeting_notes_extraction", "traceback_triage", "professional_email", "standards_interpretation", "structured_explanation", "student_feedback"], "testLabels": ["numpy vectorisation", "pytest suite", "reliability pf", "section properties", "code fizzbuzz variant", "gsm8k arithmetic", "logic puzzle", "text extraction", "beam design as3600", "dependency resolution", "load combination stats", "supervision triage", "abstract distillation", "code clause extraction", "meeting notes extraction", "traceback triage", "professional email", "standards interpretation", "structured explanation", "student feedback"], "testCategories": ["Code Generation", "Code Generation", "Code Generation", "Code Generation", "Generic Benchmarks", "Generic Benchmarks", "Generic Benchmarks", "Generic Benchmarks", "Reasoning", "Reasoning", "Reasoning", "Reasoning", "Summarization", "Summarization", "Summarization", "Summarization", "Technical Writing", "Technical Writing", "Technical Writing", "Technical Writing"], "catScores": {"claude-opus-4-6": {"code_generation": 1.0, "generic_benchmarks": 0.45, "reasoning": 0.7, "summarization": 1.0, "technical_writing": 0.925}, "deepseek-coder:6.7b": {"code_generation": 0.325, "generic_benchmarks": 0.25, "reasoning": 0.3, "summarization": 0.875, "technical_writing": 0.25}, "gemma3:1b": {"code_generation": 0.075, "generic_benchmarks": 0.325, "reasoning": 0.325, "summarization": 0.9375, "technical_writing": 0.275}, "gemma4:26b": {"code_generation": 1.0, "generic_benchmarks": 0.7, "reasoning": 0.825, "summarization": 1.0, "technical_writing": 0.425}, "gemma4:31b": {"code_generation": 0.75, "generic_benchmarks": 0.325, "reasoning": 0.85, "summarization": 0.9375, "technical_writing": 0.725}, "lfm2:24b": {"code_generation": 0.4, "generic_benchmarks": 0.45, "reasoning": 0.85, "summarization": 1.0, "technical_writing": 0.625}, "llama3.1:8b": {"code_generation": 0, "generic_benchmarks": 0.3, "reasoning": 0, "summarization": 0, "technical_writing": 0}, "llama3:latest": {"code_generation": 0.25, "generic_benchmarks": 0.575, "reasoning": 0.475, "summarization": 0.6375, "technical_writing": 0.525}, "mistral-nemo:latest": {"code_generation": 0.325, "generic_benchmarks": 0.45, "reasoning": 0.575, "summarization": 0.9375, "technical_writing": 0.525}, "phi3.5:latest": {"code_generation": 0, "generic_benchmarks": 0, "reasoning": 0, "summarization": 0.6875, "technical_writing": 0}, "qwen2.5-coder:1.5b-base": {"code_generation": 0.325, "generic_benchmarks": 0.325, "reasoning": 0.4, "summarization": 0.8875, "technical_writing": 0.375}, "qwen2.5:14b-instruct": {"code_generation": 0.5, "generic_benchmarks": 0.575, "reasoning": 0.625, "summarization": 1.0, "technical_writing": 0.55}, "qwen3.5:27b": {"code_generation": 0.75, "generic_benchmarks": 0.575, "reasoning": 0.5, "summarization": 0.6875, "technical_writing": 0.475}, "qwen3:0.6b": {"code_generation": 0.25, "generic_benchmarks": 0.575, "reasoning": 0.325, "summarization": 1.0, "technical_writing": 0.47500000000000003}, "qwen3:1.7b": {"code_generation": 0.25, "generic_benchmarks": 0.7, "reasoning": 0.6, "summarization": 1.0, "technical_writing": 0.55}, "qwen3:14b": {"code_generation": 0.575, "generic_benchmarks": 0.45, "reasoning": 0.875, "summarization": 0.9375, "technical_writing": 0.7}, "qwen3:30b-a3b": {"code_generation": 1.0, "generic_benchmarks": 0.7, "reasoning": 0.95, "summarization": 0.9375, "technical_writing": 0.725}, "qwen3:4b": {"code_generation": 0.5, "generic_benchmarks": 0.575, "reasoning": 0.925, "summarization": 0.9375, "technical_writing": 0.7000000000000001}}, "passRates": {"claude-opus-4-6": 0.8, "deepseek-coder:6.7b": 0.35, "gemma3:1b": 0.3, "gemma4:26b": 0.7, "gemma4:31b": 0.65, "lfm2:24b": 0.6, "llama3.1:8b": 0.0, "llama3:latest": 0.35, "mistral-nemo:latest": 0.45, "phi3.5:latest": 0.5, "qwen2.5-coder:1.5b-base": 0.35, "qwen2.5:14b-instruct": 0.65, "qwen3.5:27b": 0.55, "qwen3:0.6b": 0.45, "qwen3:1.7b": 0.55, "qwen3:14b": 0.6, "qwen3:30b-a3b": 0.8, "qwen3:4b": 0.7}, "testScores": {"numpy_vectorisation": {"claude-opus-4-6": 1.0, "deepseek-coder:6.7b": 0.0, "gemma3:1b": 0.0, "gemma4:26b": 1.0, "gemma4:31b": 1.0, "lfm2:24b": 0.0, "llama3.1:8b": null, "llama3:latest": 0.0, "mistral-nemo:latest": 0.0, "phi3.5:latest": null, "qwen2.5-coder:1.5b-base": 0.3, "qwen2.5:14b-instruct": 1.0, "qwen3.5:27b": 1.0, "qwen3:0.6b": 0.0, "qwen3:1.7b": 0.0, "qwen3:14b": 0.0, "qwen3:30b-a3b": 1.0, "qwen3:4b": 0.0}, "pytest_suite": {"claude-opus-4-6": 1.0, "deepseek-coder:6.7b": 1.0, "gemma3:1b": 0.0, "gemma4:26b": 1.0, "gemma4:31b": 0.0, "lfm2:24b": 1.0, "llama3.1:8b": null, "llama3:latest": 1.0, "mistral-nemo:latest": 1.0, "phi3.5:latest": null, "qwen2.5-coder:1.5b-base": 1.0, "qwen2.5:14b-instruct": 1.0, "qwen3.5:27b": 0.0, "qwen3:0.6b": 1.0, "qwen3:1.7b": 1.0, "qwen3:14b": 1.0, "qwen3:30b-a3b": 1.0, "qwen3:4b": 1.0}, "reliability_pf": {"claude-opus-4-6": 1.0, "deepseek-coder:6.7b": 0.3, "gemma3:1b": 0.0, "gemma4:26b": 1.0, "gemma4:31b": 1.0, "lfm2:24b": 0.3, "llama3.1:8b": null, "llama3:latest": 0.0, "mistral-nemo:latest": 0.0, "phi3.5:latest": null, "qwen2.5-coder:1.5b-base": 0.0, "qwen2.5:14b-instruct": 0.0, "qwen3.5:27b": 1.0, "qwen3:0.6b": 0.0, "qwen3:1.7b": 0.0, "qwen3:14b": 1.0, "qwen3:30b-a3b": 1.0, "qwen3:4b": 1.0}, "section_properties": {"claude-opus-4-6": 1.0, "deepseek-coder:6.7b": 0.0, "gemma3:1b": 0.3, "gemma4:26b": 1.0, "gemma4:31b": 1.0, "lfm2:24b": 0.3, "llama3.1:8b": null, "llama3:latest": 0.0, "mistral-nemo:latest": 0.3, "phi3.5:latest": null, "qwen2.5-coder:1.5b-base": 0.0, "qwen2.5:14b-instruct": 0.0, "qwen3.5:27b": 1.0, "qwen3:0.6b": 0.0, "qwen3:1.7b": 0.0, "qwen3:14b": 0.3, "qwen3:30b-a3b": 1.0, "qwen3:4b": 0.0}, "code_fizzbuzz_variant": {"claude-opus-4-6": 0.3, "deepseek-coder:6.7b": 0.0, "gemma3:1b": 0.3, "gemma4:26b": 0.3, "gemma4:31b": 0.3, "lfm2:24b": 0.3, "llama3.1:8b": 0.3, "llama3:latest": 0.3, "mistral-nemo:latest": 0.3, "phi3.5:latest": null, "qwen2.5-coder:1.5b-base": 0.3, "qwen2.5:14b-instruct": 0.3, "qwen3.5:27b": 0.3, "qwen3:0.6b": 0.3, "qwen3:1.7b": 0.3, "qwen3:14b": 0.3, "qwen3:30b-a3b": 0.3, "qwen3:4b": 0.3}, "gsm8k_arithmetic": {"claude-opus-4-6": 0.0, "deepseek-coder:6.7b": 0.0, "gemma3:1b": 0.0, "gemma4:26b": 1.0, "gemma4:31b": 0.0, "lfm2:24b": 0.0, "llama3.1:8b": null, "llama3:latest": 1.0, "mistral-nemo:latest": 0.0, "phi3.5:latest": null, "qwen2.5-coder:1.5b-base": 0.0, "qwen2.5:14b-instruct": 1.0, "qwen3.5:27b": 1.0, "qwen3:0.6b": 1.0, "qwen3:1.7b": 1.0, "qwen3:14b": 0.0, "qwen3:30b-a3b": 1.0, "qwen3:4b": 1.0}, "logic_puzzle": {"claude-opus-4-6": 0.5, "deepseek-coder:6.7b": 0.0, "gemma3:1b": 0.0, "gemma4:26b": 0.5, "gemma4:31b": 0.0, "lfm2:24b": 0.5, "llama3.1:8b": null, "llama3:latest": 0.0, "mistral-nemo:latest": 0.5, "phi3.5:latest": null, "qwen2.5-coder:1.5b-base": 0.0, "qwen2.5:14b-instruct": 0.0, "qwen3.5:27b": 0.0, "qwen3:0.6b": 0.0, "qwen3:1.7b": 0.5, "qwen3:14b": 0.5, "qwen3:30b-a3b": 0.5, "qwen3:4b": 0.0}, "text_extraction": {"claude-opus-4-6": 1.0, "deepseek-coder:6.7b": 1.0, "gemma3:1b": 1.0, "gemma4:26b": 1.0, "gemma4:31b": 1.0, "lfm2:24b": 1.0, "llama3.1:8b": null, "llama3:latest": 1.0, "mistral-nemo:latest": 1.0, "phi3.5:latest": null, "qwen2.5-coder:1.5b-base": 1.0, "qwen2.5:14b-instruct": 1.0, "qwen3.5:27b": 1.0, "qwen3:0.6b": 1.0, "qwen3:1.7b": 1.0, "qwen3:14b": 1.0, "qwen3:30b-a3b": 1.0, "qwen3:4b": 1.0}, "beam_design_as3600": {"claude-opus-4-6": 1.0, "deepseek-coder:6.7b": 0.0, "gemma3:1b": 0.0, "gemma4:26b": 1.0, "gemma4:31b": 1.0, "lfm2:24b": 1.0, "llama3.1:8b": null, "llama3:latest": 0.5, "mistral-nemo:latest": 0.0, "phi3.5:latest": null, "qwen2.5-coder:1.5b-base": 0.5, "qwen2.5:14b-instruct": 1.0, "qwen3.5:27b": 1.0, "qwen3:0.6b": 0.0, "qwen3:1.7b": 0.0, "qwen3:14b": 1.0, "qwen3:30b-a3b": 1.0, "qwen3:4b": 1.0}, "dependency_resolution": {"claude-opus-4-6": 1.0, "deepseek-coder:6.7b": 1.0, "gemma3:1b": 1.0, "gemma4:26b": 1.0, "gemma4:31b": 1.0, "lfm2:24b": 1.0, "llama3.1:8b": null, "llama3:latest": 1.0, "mistral-nemo:latest": 1.0, "phi3.5:latest": null, "qwen2.5-coder:1.5b-base": 1.0, "qwen2.5:14b-instruct": 1.0, "qwen3.5:27b": 1.0, "qwen3:0.6b": 1.0, "qwen3:1.7b": 1.0, "qwen3:14b": 1.0, "qwen3:30b-a3b": 1.0, "qwen3:4b": 1.0}, "load_combination_stats": {"claude-opus-4-6": 0.0, "deepseek-coder:6.7b": 0.0, "gemma3:1b": 0.0, "gemma4:26b": 1.0, "gemma4:31b": 1.0, "lfm2:24b": 1.0, "llama3.1:8b": null, "llama3:latest": 0.0, "mistral-nemo:latest": 1.0, "phi3.5:latest": null, "qwen2.5-coder:1.5b-base": 0.0, "qwen2.5:14b-instruct": 0.0, "qwen3.5:27b": 0.0, "qwen3:0.6b": 0.0, "qwen3:1.7b": 1.0, "qwen3:14b": 1.0, "qwen3:30b-a3b": 1.0, "qwen3:4b": 1.0}, "supervision_triage": {"claude-opus-4-6": 0.8, "deepseek-coder:6.7b": 0.2, "gemma3:1b": 0.3, "gemma4:26b": 0.3, "gemma4:31b": 0.4, "lfm2:24b": 0.4, "llama3.1:8b": null, "llama3:latest": 0.4, "mistral-nemo:latest": 0.3, "phi3.5:latest": null, "qwen2.5-coder:1.5b-base": 0.1, "qwen2.5:14b-instruct": 0.5, "qwen3.5:27b": 0.0, "qwen3:0.6b": 0.3, "qwen3:1.7b": 0.4, "qwen3:14b": 0.5, "qwen3:30b-a3b": 0.8, "qwen3:4b": 0.7}, "abstract_distillation": {"claude-opus-4-6": 1.0, "deepseek-coder:6.7b": 1.0, "gemma3:1b": 1.0, "gemma4:26b": 1.0, "gemma4:31b": 1.0, "lfm2:24b": 1.0, "llama3.1:8b": null, "llama3:latest": 0.8, "mistral-nemo:latest": 1.0, "phi3.5:latest": 1.0, "qwen2.5-coder:1.5b-base": 0.8, "qwen2.5:14b-instruct": 1.0, "qwen3.5:27b": 1.0, "qwen3:0.6b": 1.0, "qwen3:1.7b": 1.0, "qwen3:14b": 1.0, "qwen3:30b-a3b": 1.0, "qwen3:4b": 1.0}, "code_clause_extraction": {"claude-opus-4-6": 1.0, "deepseek-coder:6.7b": 0.5, "gemma3:1b": 1.0, "gemma4:26b": 1.0, "gemma4:31b": 1.0, "lfm2:24b": 1.0, "llama3.1:8b": null, "llama3:latest": 0.0, "mistral-nemo:latest": 1.0, "phi3.5:latest": 0.0, "qwen2.5-coder:1.5b-base": 1.0, "qwen2.5:14b-instruct": 1.0, "qwen3.5:27b": 1.0, "qwen3:0.6b": 1.0, "qwen3:1.7b": 1.0, "qwen3:14b": 1.0, "qwen3:30b-a3b": 1.0, "qwen3:4b": 1.0}, "meeting_notes_extraction": {"claude-opus-4-6": 1.0, "deepseek-coder:6.7b": 1.0, "gemma3:1b": 1.0, "gemma4:26b": 1.0, "gemma4:31b": 1.0, "lfm2:24b": 1.0, "llama3.1:8b": null, "llama3:latest": 1.0, "mistral-nemo:latest": 1.0, "phi3.5:latest": 1.0, "qwen2.5-coder:1.5b-base": 1.0, "qwen2.5:14b-instruct": 1.0, "qwen3.5:27b": 0.0, "qwen3:0.6b": 1.0, "qwen3:1.7b": 1.0, "qwen3:14b": 1.0, "qwen3:30b-a3b": 1.0, "qwen3:4b": 1.0}, "traceback_triage": {"claude-opus-4-6": 1.0, "deepseek-coder:6.7b": 1.0, "gemma3:1b": 0.75, "gemma4:26b": 1.0, "gemma4:31b": 0.75, "lfm2:24b": 1.0, "llama3.1:8b": null, "llama3:latest": 0.75, "mistral-nemo:latest": 0.75, "phi3.5:latest": 0.75, "qwen2.5-coder:1.5b-base": 0.75, "qwen2.5:14b-instruct": 1.0, "qwen3.5:27b": 0.75, "qwen3:0.6b": 1.0, "qwen3:1.7b": 1.0, "qwen3:14b": 0.75, "qwen3:30b-a3b": 0.75, "qwen3:4b": 0.75}, "professional_email": {"claude-opus-4-6": 0.9, "deepseek-coder:6.7b": 0.0, "gemma3:1b": 0.4, "gemma4:26b": 0.5, "gemma4:31b": 0.7, "lfm2:24b": 0.7, "llama3.1:8b": null, "llama3:latest": 0.5, "mistral-nemo:latest": 0.4, "phi3.5:latest": null, "qwen2.5-coder:1.5b-base": 0.5, "qwen2.5:14b-instruct": 0.5, "qwen3.5:27b": 0.0, "qwen3:0.6b": 0.4, "qwen3:1.7b": 0.4, "qwen3:14b": 0.6, "qwen3:30b-a3b": 0.8, "qwen3:4b": 0.8}, "standards_interpretation": {"claude-opus-4-6": 0.8, "deepseek-coder:6.7b": 0.0, "gemma3:1b": 0.0, "gemma4:26b": 0.3, "gemma4:31b": 0.3, "lfm2:24b": 0.1, "llama3.1:8b": null, "llama3:latest": 0.1, "mistral-nemo:latest": 0.1, "phi3.5:latest": null, "qwen2.5-coder:1.5b-base": 0.0, "qwen2.5:14b-instruct": 0.1, "qwen3.5:27b": 0.0, "qwen3:0.6b": 0.1, "qwen3:1.7b": 0.1, "qwen3:14b": 0.3, "qwen3:30b-a3b": 0.2, "qwen3:4b": 0.1}, "structured_explanation": {"claude-opus-4-6": 1.0, "deepseek-coder:6.7b": 1.0, "gemma3:1b": 0.0, "gemma4:26b": 0.0, "gemma4:31b": 1.0, "lfm2:24b": 1.0, "llama3.1:8b": null, "llama3:latest": 1.0, "mistral-nemo:latest": 1.0, "phi3.5:latest": null, "qwen2.5-coder:1.5b-base": 1.0, "qwen2.5:14b-instruct": 1.0, "qwen3.5:27b": 1.0, "qwen3:0.6b": 1.0, "qwen3:1.7b": 1.0, "qwen3:14b": 1.0, "qwen3:30b-a3b": 1.0, "qwen3:4b": 1.0}, "student_feedback": {"claude-opus-4-6": 1.0, "deepseek-coder:6.7b": 0.0, "gemma3:1b": 0.7, "gemma4:26b": 0.9, "gemma4:31b": 0.9, "lfm2:24b": 0.7, "llama3.1:8b": null, "llama3:latest": 0.5, "mistral-nemo:latest": 0.6, "phi3.5:latest": null, "qwen2.5-coder:1.5b-base": 0.0, "qwen2.5:14b-instruct": 0.6, "qwen3.5:27b": 0.9, "qwen3:0.6b": 0.4, "qwen3:1.7b": 0.7, "qwen3:14b": 0.9, "qwen3:30b-a3b": 0.9, "qwen3:4b": 0.9}}, "perfTks": {"claude-opus-4-6": 21.4, "deepseek-coder:6.7b": 93.7, "gemma3:1b": 105.2, "gemma4:26b": 12.1, "gemma4:31b": 2.7, "lfm2:24b": 63.4, "llama3.1:8b": 40.0, "llama3:latest": 70.2, "mistral-nemo:latest": 51.7, "phi3.5:latest": 1.8, "qwen2.5-coder:1.5b-base": 130.7, "qwen2.5:14b-instruct": 42.1, "qwen3.5:27b": 1.5, "qwen3:0.6b": 4.8, "qwen3:1.7b": 10.2, "qwen3:14b": 4.7, "qwen3:30b-a3b": 14.3, "qwen3:4b": 12.2}, "perfTtft": {"claude-opus-4-6": 19.41, "deepseek-coder:6.7b": 0.21, "gemma3:1b": 1.16, "gemma4:26b": 30.62, "gemma4:31b": 68.33, "lfm2:24b": 2.51, "llama3.1:8b": 2.99, "llama3:latest": 1.51, "mistral-nemo:latest": 1.95, "phi3.5:latest": 71.77, "qwen2.5-coder:1.5b-base": 0.99, "qwen2.5:14b-instruct": 1.73, "qwen3.5:27b": 100.23, "qwen3:0.6b": 3.94, "qwen3:1.7b": 10.65, "qwen3:14b": 69.37, "qwen3:30b-a3b": 32.27, "qwen3:4b": 30.66}, "summary": {"claude-opus-4-6": {"tests": 20, "total_tests": 20, "passed": 16, "avg_score": 0.815, "avg_time": 19.8, "total_tokens": 11828, "tk_s": 21.4, "complete": true}, "deepseek-coder:6.7b": {"tests": 20, "total_tests": 20, "passed": 7, "avg_score": 0.4, "avg_time": 2.4, "total_tokens": 7851, "tk_s": 93.7, "complete": true}, "gemma3:1b": {"tests": 20, "total_tests": 20, "passed": 6, "avg_score": 0.388, "avg_time": 15.2, "total_tokens": 35248, "tk_s": 105.2, "complete": true}, "gemma4:26b": {"tests": 20, "total_tests": 20, "passed": 14, "avg_score": 0.79, "avg_time": 38.7, "total_tokens": 12695, "tk_s": 12.1, "complete": true}, "gemma4:31b": {"tests": 20, "total_tests": 20, "passed": 13, "avg_score": 0.718, "avg_time": 164.5, "total_tokens": 11278, "tk_s": 2.7, "complete": true}, "lfm2:24b": {"tests": 20, "total_tests": 20, "passed": 12, "avg_score": 0.665, "avg_time": 7.3, "total_tokens": 12588, "tk_s": 63.4, "complete": true}, "llama3.1:8b": {"tests": 1, "total_tests": 20, "passed": 0, "avg_score": 0.3, "avg_time": 5.3, "total_tokens": 284, "tk_s": 40.0, "complete": false}, "llama3:latest": {"tests": 20, "total_tests": 20, "passed": 7, "avg_score": 0.492, "avg_time": 4.2, "total_tokens": 9175, "tk_s": 70.2, "complete": true}, "mistral-nemo:latest": {"tests": 20, "total_tests": 20, "passed": 9, "avg_score": 0.562, "avg_time": 6.0, "total_tokens": 9497, "tk_s": 51.7, "complete": true}, "phi3.5:latest": {"tests": 4, "total_tests": 20, "passed": 2, "avg_score": 0.688, "avg_time": 72.5, "total_tokens": 1586, "tk_s": 1.8, "complete": false}, "qwen2.5-coder:1.5b-base": {"tests": 20, "total_tests": 20, "passed": 7, "avg_score": 0.463, "avg_time": 2.8, "total_tokens": 10749, "tk_s": 130.7, "complete": true}, "qwen2.5:14b-instruct": {"tests": 20, "total_tests": 20, "passed": 13, "avg_score": 0.65, "avg_time": 9.6, "total_tokens": 11439, "tk_s": 42.1, "complete": true}, "qwen3.5:27b": {"tests": 20, "total_tests": 20, "passed": 11, "avg_score": 0.597, "avg_time": 193.0, "total_tokens": 9221, "tk_s": 1.5, "complete": true}, "qwen3:0.6b": {"tests": 20, "total_tests": 20, "passed": 9, "avg_score": 0.525, "avg_time": 34.5, "total_tokens": 6651, "tk_s": 4.8, "complete": true}, "qwen3:1.7b": {"tests": 20, "total_tests": 20, "passed": 11, "avg_score": 0.62, "avg_time": 30.4, "total_tokens": 9528, "tk_s": 10.2, "complete": true}, "qwen3:14b": {"tests": 20, "total_tests": 20, "passed": 12, "avg_score": 0.708, "avg_time": 88.4, "total_tokens": 11597, "tk_s": 4.7, "complete": true}, "qwen3:30b-a3b": {"tests": 20, "total_tests": 20, "passed": 16, "avg_score": 0.863, "avg_time": 40.7, "total_tokens": 14957, "tk_s": 14.3, "complete": true}, "qwen3:4b": {"tests": 20, "total_tests": 20, "passed": 14, "avg_score": 0.728, "avg_time": 44.1, "total_tokens": 13627, "tk_s": 12.2, "complete": true}}, "colours": {"claude-opus-4-6": "#4dc9f6", "deepseek-coder:6.7b": "#f67019", "gemma3:1b": "#f53794", "gemma4:26b": "#537bc4", "gemma4:31b": "#acc236", "lfm2:24b": "#166a8f", "llama3.1:8b": "#00a950", "llama3:latest": "#8549ba", "mistral-nemo:latest": "#e8c3b9", "phi3.5:latest": "#c45850", "qwen2.5-coder:1.5b-base": "#4dc9f6", "qwen2.5:14b-instruct": "#f67019", "qwen3.5:27b": "#f53794", "qwen3:0.6b": "#537bc4", "qwen3:1.7b": "#acc236", "qwen3:14b": "#166a8f", "qwen3:30b-a3b": "#00a950", "qwen3:4b": "#8549ba"}, "modelMeta": {"deepseek-coder:6.7b": {"params": "7B", "quant": "Q4_0", "family": "llama", "vram_gb": 5.9, "tier": "8GB"}, "gemma3:1b": {"params": "999.89M", "quant": "Q4_K_M", "family": "gemma3", "vram_gb": 0.0, "tier": "8GB"}, "gemma4:26b": {"params": "25.8B", "quant": "Q4_K_M", "family": "gemma4", "vram_gb": 17.5, "tier": "24GB"}, "gemma4:31b": {"params": "31.3B", "quant": "Q4_K_M", "family": "gemma4", "vram_gb": 20.8, "tier": "24GB"}, "lfm2:24b": {"params": "23.8B", "quant": "Q4_K_M", "family": "lfm2moe", "vram_gb": 16.3, "tier": "24GB"}, "llama3.1:8b": {"params": "8.0B", "quant": "Q4_K_M", "family": "llama", "vram_gb": 6.8, "tier": "8GB"}, "llama3:latest": {"params": "8.0B", "quant": "Q4_0", "family": "llama", "vram_gb": 6.5, "tier": "8GB"}, "mistral-nemo:latest": {"params": "12.2B", "quant": "Q4_0", "family": "llama", "vram_gb": 8.9, "tier": "16GB"}, "phi3.5:latest": {"params": "3.8B", "quant": "Q4_0", "family": "phi3", "vram_gb": 4.1, "tier": "8GB"}, "qwen2.5-coder:1.5b-base": {"params": "1.5B", "quant": "Q4_K_M", "family": "qwen2", "vram_gb": 2.9, "tier": "8GB"}, "qwen2.5:14b-instruct": {"params": "14.8B", "quant": "Q4_K_M", "family": "qwen2", "vram_gb": 10.9, "tier": "16GB"}, "qwen3.5:27b": {"params": "27.8B", "quant": "Q4_K_M", "family": "qwen35", "vram_gb": 18.7, "tier": "24GB"}, "qwen3:0.6b": {"params": "751.63M", "quant": "Q4_K_M", "family": "qwen3", "vram_gb": 0.0, "tier": "8GB"}, "qwen3:1.7b": {"params": "2.0B", "quant": "Q4_K_M", "family": "qwen3", "vram_gb": 3.2, "tier": "8GB"}, "qwen3:14b": {"params": "14.8B", "quant": "Q4_K_M", "family": "qwen3", "vram_gb": 10.9, "tier": "16GB"}, "qwen3:30b-a3b": {"params": "30.5B", "quant": "Q4_K_M", "family": "qwen3moe", "vram_gb": 20.3, "tier": "24GB"}, "qwen3:4b": {"params": "4.0B", "quant": "Q4_K_M", "family": "qwen3", "vram_gb": 4.4, "tier": "8GB"}}, "lookup": {"claude-opus-4-6|section_properties": {"score": 1.0, "passed": true, "time": 45.165, "tks": 12.6, "ttft": 44.859}, "claude-opus-4-6|reliability_pf": {"score": 1.0, "passed": true, "time": 30.258, "tks": 11.6, "ttft": 29.965}, "claude-opus-4-6|numpy_vectorisation": {"score": 1.0, "passed": true, "time": 28.963, "tks": 11.7, "ttft": 28.668}, "claude-opus-4-6|pytest_suite": {"score": 1.0, "passed": true, "time": 10.19, "tks": 23.7, "ttft": 9.678}, "claude-opus-4-6|gsm8k_arithmetic": {"score": 0.0, "passed": false, "time": 11.52, "tks": 6.7, "ttft": 11.008}, "claude-opus-4-6|logic_puzzle": {"score": 0.5, "passed": false, "time": 22.564, "tks": 28.1, "ttft": 22.228}, "claude-opus-4-6|code_fizzbuzz_variant": {"score": 0.3, "passed": false, "time": 6.669, "tks": 6.1, "ttft": 6.156}, "claude-opus-4-6|text_extraction": {"score": 1.0, "passed": true, "time": 5.568, "tks": 6.3, "ttft": 5.057}, "claude-opus-4-6|beam_design_as3600": {"score": 1.0, "passed": true, "time": 38.339, "tks": 17.3, "ttft": 38.068}, "claude-opus-4-6|load_combination_stats": {"score": 0.0, "passed": false, "time": 14.932, "tks": 23.7, "ttft": 14.419}, "claude-opus-4-6|dependency_resolution": {"score": 1.0, "passed": true, "time": 16.753, "tks": 30.0, "ttft": 16.464}, "claude-opus-4-6|supervision_triage": {"score": 0.8, "passed": true, "time": 32.945, "tks": 30.3, "ttft": 32.61}, "claude-opus-4-6|code_clause_extraction": {"score": 1.0, "passed": true, "time": 7.332, "tks": 16.9, "ttft": 6.825}, "claude-opus-4-6|traceback_triage": {"score": 1.0, "passed": true, "time": 8.257, "tks": 15.5, "ttft": 7.743}, "claude-opus-4-6|abstract_distillation": {"score": 1.0, "passed": true, "time": 7.028, "tks": 20.2, "ttft": 6.518}, "claude-opus-4-6|meeting_notes_extraction": {"score": 1.0, "passed": true, "time": 10.619, "tks": 29.7, "ttft": 10.107}, "claude-opus-4-6|structured_explanation": {"score": 1.0, "passed": true, "time": 26.589, "tks": 36.3, "ttft": 26.307}, "claude-opus-4-6|student_feedback": {"score": 1.0, "passed": true, "time": 14.156, "tks": 28.6, "ttft": 13.641}, "claude-opus-4-6|professional_email": {"score": 0.9, "passed": true, "time": 16.768, "tks": 19.9, "ttft": 16.494}, "claude-opus-4-6|standards_interpretation": {"score": 0.8, "passed": true, "time": 41.742, "tks": 30.6, "ttft": 41.468}, "deepseek-coder:6.7b|code_fizzbuzz_variant": {"score": 0.0, "passed": false, "time": 0.691, "tks": 72.4, "ttft": 0.115}, "deepseek-coder:6.7b|section_properties": {"score": 0.0, "passed": false, "time": 6.719, "tks": 61.2, "ttft": 1.142}, "deepseek-coder:6.7b|reliability_pf": {"score": 0.3, "passed": false, "time": 4.337, "tks": 95.5, "ttft": 0.188}, "deepseek-coder:6.7b|numpy_vectorisation": {"score": 0.0, "passed": false, "time": 2.544, "tks": 82.5, "ttft": 0.232}, "deepseek-coder:6.7b|pytest_suite": {"score": 1.0, "passed": true, "time": 3.65, "tks": 66.6, "ttft": 0.193}, "deepseek-coder:6.7b|gsm8k_arithmetic": {"score": 0.0, "passed": false, "time": 1.575, "tks": 83.2, "ttft": 0.12}, "deepseek-coder:6.7b|logic_puzzle": {"score": 0.0, "passed": false, "time": 2.164, "tks": 112.3, "ttft": 0.066}, "deepseek-coder:6.7b|text_extraction": {"score": 1.0, "passed": true, "time": 0.73, "tks": 45.2, "ttft": 0.152}, "deepseek-coder:6.7b|beam_design_as3600": {"score": 0.0, "passed": false, "time": 0.955, "tks": 119.4, "ttft": 0.241}, "deepseek-coder:6.7b|load_combination_stats": {"score": 0.0, "passed": false, "time": 4.915, "tks": 78.5, "ttft": 0.119}, "deepseek-coder:6.7b|dependency_resolution": {"score": 1.0, "passed": true, "time": 3.19, "tks": 106.0, "ttft": 0.151}, "deepseek-coder:6.7b|supervision_triage": {"score": 0.2, "passed": false, "time": 2.854, "tks": 132.8, "ttft": 0.189}, "deepseek-coder:6.7b|code_clause_extraction": {"score": 0.5, "passed": false, "time": 4.022, "tks": 100.4, "ttft": 0.101}, "deepseek-coder:6.7b|traceback_triage": {"score": 1.0, "passed": true, "time": 1.778, "tks": 117.0, "ttft": 0.102}, "deepseek-coder:6.7b|abstract_distillation": {"score": 1.0, "passed": true, "time": 1.519, "tks": 116.5, "ttft": 0.232}, "deepseek-coder:6.7b|meeting_notes_extraction": {"score": 1.0, "passed": true, "time": 2.765, "tks": 104.9, "ttft": 0.341}, "deepseek-coder:6.7b|structured_explanation": {"score": 1.0, "passed": true, "time": 1.951, "tks": 117.4, "ttft": 0.124}, "deepseek-coder:6.7b|student_feedback": {"score": 0.0, "passed": false, "time": 0.704, "tks": 132.1, "ttft": 0.152}, "deepseek-coder:6.7b|professional_email": {"score": 0.0, "passed": false, "time": 0.58, "tks": 148.3, "ttft": 0.067}, "deepseek-coder:6.7b|standards_interpretation": {"score": 0.0, "passed": false, "time": 0.643, "tks": 129.1, "ttft": 0.143}, "gemma3:1b|section_properties": {"score": 0.3, "passed": false, "time": 5.636, "tks": 147.6, "ttft": 1.146}, "gemma3:1b|reliability_pf": {"score": 0.0, "passed": false, "time": 5.08, "tks": 171.9, "ttft": 1.144}, "gemma3:1b|numpy_vectorisation": {"score": 0.0, "passed": false, "time": 3.572, "tks": 136.9, "ttft": 1.155}, "gemma3:1b|pytest_suite": {"score": 0.0, "passed": false, "time": 120.002, "tks": 124.3, "ttft": 1.161}, "gemma3:1b|gsm8k_arithmetic": {"score": 0.0, "passed": false, "time": 2.189, "tks": 49.3, "ttft": 1.401}, "gemma3:1b|logic_puzzle": {"score": 0.0, "passed": false, "time": 2.81, "tks": 108.5, "ttft": 1.164}, "gemma3:1b|code_fizzbuzz_variant": {"score": 0.3, "passed": false, "time": 1.859, "tks": 58.6, "ttft": 1.145}, "gemma3:1b|text_extraction": {"score": 1.0, "passed": true, "time": 1.422, "tks": 23.9, "ttft": 1.145}, "gemma3:1b|beam_design_as3600": {"score": 0.0, "passed": false, "time": 120.001, "tks": 70.4, "ttft": 1.159}, "gemma3:1b|load_combination_stats": {"score": 0.0, "passed": false, "time": 5.058, "tks": 105.8, "ttft": 1.15}, "gemma3:1b|dependency_resolution": {"score": 1.0, "passed": true, "time": 7.413, "tks": 111.4, "ttft": 1.145}, "gemma3:1b|supervision_triage": {"score": 0.3, "passed": false, "time": 6.737, "tks": 204.5, "ttft": 1.147}, "gemma3:1b|code_clause_extraction": {"score": 1.0, "passed": true, "time": 1.71, "tks": 46.8, "ttft": 1.162}, "gemma3:1b|traceback_triage": {"score": 0.75, "passed": false, "time": 1.736, "tks": 68.5, "ttft": 1.153}, "gemma3:1b|abstract_distillation": {"score": 1.0, "passed": true, "time": 1.428, "tks": 50.4, "ttft": 1.152}, "gemma3:1b|meeting_notes_extraction": {"score": 1.0, "passed": true, "time": 2.726, "tks": 117.8, "ttft": 1.182}, "gemma3:1b|structured_explanation": {"score": 0.0, "passed": false, "time": 3.348, "tks": 169.1, "ttft": 1.137}, "gemma3:1b|student_feedback": {"score": 0.7, "passed": true, "time": 2.001, "tks": 147.9, "ttft": 1.129}, "gemma3:1b|professional_email": {"score": 0.4, "passed": false, "time": 1.892, "tks": 121.0, "ttft": 1.141}, "gemma3:1b|standards_interpretation": {"score": 0.0, "passed": false, "time": 6.784, "tks": 204.2, "ttft": 1.144}, "gemma4:26b|section_properties": {"score": 1.0, "passed": true, "time": 52.34, "tks": 37.9, "ttft": 33.902}, "gemma4:26b|reliability_pf": {"score": 1.0, "passed": true, "time": 43.81, "tks": 46.2, "ttft": 35.099}, "gemma4:26b|numpy_vectorisation": {"score": 1.0, "passed": true, "time": 19.896, "tks": 42.8, "ttft": 13.795}, "gemma4:26b|pytest_suite": {"score": 1.0, "passed": true, "time": 42.394, "tks": 46.7, "ttft": 31.09}, "gemma4:26b|gsm8k_arithmetic": {"score": 1.0, "passed": true, "time": 34.263, "tks": 35.7, "ttft": 30.871}, "gemma4:26b|logic_puzzle": {"score": 0.5, "passed": false, "time": 244.497, "tks": 45.9, "ttft": 225.39}, "gemma4:26b|code_fizzbuzz_variant": {"score": 0.3, "passed": false, "time": 13.068, "tks": 39.6, "ttft": 9.466}, "gemma4:26b|text_extraction": {"score": 1.0, "passed": true, "time": 9.838, "tks": 37.5, "ttft": 8.759}, "gemma4:26b|beam_design_as3600": {"score": 1.0, "passed": true, "time": 54.541, "tks": 40.0, "ttft": 36.104}, "gemma4:26b|load_combination_stats": {"score": 1.0, "passed": true, "time": 30.805, "tks": 40.1, "ttft": 18.96}, "gemma4:26b|dependency_resolution": {"score": 1.0, "passed": true, "time": 25.873, "tks": 45.7, "ttft": 14.281}, "gemma4:26b|supervision_triage": {"score": 0.3, "passed": false, "time": 30.093, "tks": 66.2, "ttft": 18.911}, "gemma4:26b|code_clause_extraction": {"score": 1.0, "passed": true, "time": 31.223, "tks": 56.2, "ttft": 29.774}, "gemma4:26b|traceback_triage": {"score": 1.0, "passed": true, "time": 9.264, "tks": 45.1, "ttft": 8.212}, "gemma4:26b|abstract_distillation": {"score": 1.0, "passed": true, "time": 12.942, "tks": 68.1, "ttft": 11.636}, "gemma4:26b|meeting_notes_extraction": {"score": 1.0, "passed": true, "time": 35.489, "tks": 70.5, "ttft": 31.491}, "gemma4:26b|structured_explanation": {"score": 0.0, "passed": false, "time": 20.906, "tks": 69.2, "ttft": 12.432}, "gemma4:26b|student_feedback": {"score": 0.9, "passed": true, "time": 15.471, "tks": 81.6, "ttft": 12.807}, "gemma4:26b|professional_email": {"score": 0.5, "passed": false, "time": 13.944, "tks": 74.5, "ttft": 11.554}, "gemma4:26b|standards_interpretation": {"score": 0.3, "passed": false, "time": 32.785, "tks": 66.9, "ttft": 17.917}, "gemma4:31b|code_fizzbuzz_variant": {"score": 0.3, "passed": false, "time": 91.251, "tks": 6.8, "ttft": 56.311}, "gemma4:31b|beam_design_as3600": {"score": 1.0, "passed": true, "time": 568.133, "tks": 3.9, "ttft": 372.768}, "gemma4:31b|section_properties": {"score": 1.0, "passed": true, "time": 334.541, "tks": 4.6, "ttft": 171.889}, "gemma4:31b|reliability_pf": {"score": 1.0, "passed": true, "time": 187.239, "tks": 6.4, "ttft": 112.23}, "gemma4:31b|numpy_vectorisation": {"score": 1.0, "passed": true, "time": 108.437, "tks": 5.7, "ttft": 55.751}, "gemma4:31b|pytest_suite": {"score": 0.0, "passed": false, "time": 214.23, "tks": 5.5, "ttft": 114.812}, "gemma4:31b|gsm8k_arithmetic": {"score": 0.0, "passed": false, "time": 93.195, "tks": 4.3, "ttft": 65.4}, "gemma4:31b|logic_puzzle": {"score": 0.0, "passed": false, "time": 300.016, "tks": 6.5, "ttft": 0.813}, "gemma4:31b|text_extraction": {"score": 1.0, "passed": true, "time": 39.493, "tks": 7.1, "ttft": 32.51}, "gemma4:31b|load_combination_stats": {"score": 1.0, "passed": true, "time": 161.301, "tks": 5.3, "ttft": 77.914}, "gemma4:31b|dependency_resolution": {"score": 1.0, "passed": true, "time": 168.237, "tks": 6.3, "ttft": 78.504}, "gemma4:31b|supervision_triage": {"score": 0.4, "passed": false, "time": 171.602, "tks": 9.1, "ttft": 86.365}, "gemma4:31b|code_clause_extraction": {"score": 1.0, "passed": true, "time": 80.771, "tks": 8.7, "ttft": 68.667}, "gemma4:31b|traceback_triage": {"score": 0.75, "passed": false, "time": 36.222, "tks": 8.3, "ttft": 26.239}, "gemma4:31b|abstract_distillation": {"score": 1.0, "passed": true, "time": 56.084, "tks": 10.5, "ttft": 44.427}, "gemma4:31b|meeting_notes_extraction": {"score": 1.0, "passed": true, "time": 102.406, "tks": 9.2, "ttft": 68.608}, "gemma4:31b|structured_explanation": {"score": 1.0, "passed": true, "time": 144.227, "tks": 9.2, "ttft": 92.054}, "gemma4:31b|student_feedback": {"score": 0.9, "passed": true, "time": 87.972, "tks": 11.3, "ttft": 65.9}, "gemma4:31b|professional_email": {"score": 0.7, "passed": true, "time": 70.636, "tks": 10.9, "ttft": 51.134}, "gemma4:31b|standards_interpretation": {"score": 0.3, "passed": false, "time": 273.062, "tks": 8.1, "ttft": 132.375}, "lfm2:24b|section_properties": {"score": 0.3, "passed": false, "time": 16.068, "tks": 46.8, "ttft": 5.849}, "lfm2:24b|reliability_pf": {"score": 0.3, "passed": false, "time": 9.392, "tks": 66.4, "ttft": 2.14}, "lfm2:24b|numpy_vectorisation": {"score": 0.0, "passed": false, "time": 6.572, "tks": 56.0, "ttft": 2.152}, "lfm2:24b|pytest_suite": {"score": 1.0, "passed": true, "time": 6.246, "tks": 51.4, "ttft": 2.181}, "lfm2:24b|gsm8k_arithmetic": {"score": 0.0, "passed": false, "time": 4.255, "tks": 40.2, "ttft": 2.165}, "lfm2:24b|logic_puzzle": {"score": 0.5, "passed": false, "time": 15.149, "tks": 70.4, "ttft": 2.41}, "lfm2:24b|code_fizzbuzz_variant": {"score": 0.3, "passed": false, "time": 2.656, "tks": 15.8, "ttft": 2.157}, "lfm2:24b|text_extraction": {"score": 1.0, "passed": true, "time": 2.771, "tks": 11.5, "ttft": 2.374}, "lfm2:24b|beam_design_as3600": {"score": 1.0, "passed": true, "time": 21.39, "tks": 70.3, "ttft": 2.446}, "lfm2:24b|load_combination_stats": {"score": 1.0, "passed": true, "time": 7.612, "tks": 52.8, "ttft": 2.418}, "lfm2:24b|dependency_resolution": {"score": 1.0, "passed": true, "time": 7.851, "tks": 58.2, "ttft": 2.394}, "lfm2:24b|supervision_triage": {"score": 0.4, "passed": false, "time": 6.647, "tks": 96.3, "ttft": 2.416}, "lfm2:24b|code_clause_extraction": {"score": 1.0, "passed": true, "time": 3.15, "tks": 25.4, "ttft": 2.416}, "lfm2:24b|traceback_triage": {"score": 1.0, "passed": true, "time": 3.082, "tks": 26.3, "ttft": 2.413}, "lfm2:24b|abstract_distillation": {"score": 1.0, "passed": true, "time": 3.13, "tks": 35.1, "ttft": 2.406}, "lfm2:24b|meeting_notes_extraction": {"score": 1.0, "passed": true, "time": 3.996, "tks": 49.3, "ttft": 2.446}, "lfm2:24b|structured_explanation": {"score": 1.0, "passed": true, "time": 6.146, "tks": 87.2, "ttft": 2.384}, "lfm2:24b|student_feedback": {"score": 0.7, "passed": true, "time": 4.088, "tks": 91.5, "ttft": 2.159}, "lfm2:24b|professional_email": {"score": 0.7, "passed": true, "time": 3.755, "tks": 64.5, "ttft": 2.397}, "lfm2:24b|standards_interpretation": {"score": 0.1, "passed": false, "time": 12.08, "tks": 104.4, "ttft": 2.397}, "llama3.1:8b|code_fizzbuzz_variant": {"score": 0.3, "passed": false, "time": 5.27, "tks": 40.0, "ttft": 2.987}, "llama3:latest|section_properties": {"score": 0.0, "passed": false, "time": 8.568, "tks": 34.9, "ttft": 5.558}, "llama3:latest|reliability_pf": {"score": 0.0, "passed": false, "time": 5.178, "tks": 83.0, "ttft": 1.537}, "llama3:latest|numpy_vectorisation": {"score": 0.0, "passed": false, "time": 4.169, "tks": 63.8, "ttft": 1.347}, "llama3:latest|pytest_suite": {"score": 1.0, "passed": true, "time": 4.971, "tks": 75.6, "ttft": 1.219}, "llama3:latest|gsm8k_arithmetic": {"score": 1.0, "passed": true, "time": 3.22, "tks": 53.1, "ttft": 1.202}, "llama3:latest|logic_puzzle": {"score": 0.0, "passed": false, "time": 3.115, "tks": 64.5, "ttft": 1.28}, "llama3:latest|code_fizzbuzz_variant": {"score": 0.3, "passed": false, "time": 3.125, "tks": 57.3, "ttft": 1.294}, "llama3:latest|text_extraction": {"score": 1.0, "passed": true, "time": 1.645, "tks": 18.2, "ttft": 1.247}, "llama3:latest|beam_design_as3600": {"score": 0.5, "passed": false, "time": 5.727, "tks": 66.2, "ttft": 1.332}, "llama3:latest|load_combination_stats": {"score": 0.0, "passed": false, "time": 5.009, "tks": 50.1, "ttft": 1.181}, "llama3:latest|dependency_resolution": {"score": 1.0, "passed": true, "time": 5.338, "tks": 69.1, "ttft": 1.287}, "llama3:latest|supervision_triage": {"score": 0.4, "passed": false, "time": 5.287, "tks": 102.7, "ttft": 1.336}, "llama3:latest|code_clause_extraction": {"score": 0.0, "passed": false, "time": 1.982, "tks": 34.8, "ttft": 1.33}, "llama3:latest|traceback_triage": {"score": 0.75, "passed": false, "time": 2.586, "tks": 56.1, "ttft": 1.305}, "llama3:latest|abstract_distillation": {"score": 0.8, "passed": false, "time": 2.367, "tks": 60.8, "ttft": 1.335}, "llama3:latest|meeting_notes_extraction": {"score": 1.0, "passed": true, "time": 2.449, "tks": 49.0, "ttft": 1.369}, "llama3:latest|structured_explanation": {"score": 1.0, "passed": true, "time": 5.293, "tks": 102.4, "ttft": 1.182}, "llama3:latest|student_feedback": {"score": 0.5, "passed": false, "time": 4.121, "tks": 122.3, "ttft": 1.284}, "llama3:latest|professional_email": {"score": 0.5, "passed": true, "time": 2.889, "tks": 89.6, "ttft": 1.277}, "llama3:latest|standards_interpretation": {"score": 0.1, "passed": false, "time": 6.217, "tks": 91.5, "ttft": 1.277}, "mistral-nemo:latest|section_properties": {"score": 0.3, "passed": false, "time": 12.684, "tks": 20.5, "ttft": 7.965}, "mistral-nemo:latest|reliability_pf": {"score": 0.0, "passed": false, "time": 7.003, "tks": 55.1, "ttft": 1.664}, "mistral-nemo:latest|numpy_vectorisation": {"score": 0.0, "passed": false, "time": 5.966, "tks": 50.0, "ttft": 1.767}, "mistral-nemo:latest|pytest_suite": {"score": 1.0, "passed": true, "time": 6.928, "tks": 41.0, "ttft": 1.551}, "mistral-nemo:latest|gsm8k_arithmetic": {"score": 0.0, "passed": false, "time": 4.055, "tks": 36.0, "ttft": 1.523}, "mistral-nemo:latest|logic_puzzle": {"score": 0.5, "passed": false, "time": 5.846, "tks": 54.7, "ttft": 1.652}, "mistral-nemo:latest|code_fizzbuzz_variant": {"score": 0.3, "passed": false, "time": 3.345, "tks": 32.0, "ttft": 1.532}, "mistral-nemo:latest|text_extraction": {"score": 1.0, "passed": true, "time": 2.429, "tks": 14.0, "ttft": 1.621}, "mistral-nemo:latest|beam_design_as3600": {"score": 0.0, "passed": false, "time": 9.46, "tks": 50.0, "ttft": 1.549}, "mistral-nemo:latest|load_combination_stats": {"score": 1.0, "passed": true, "time": 7.738, "tks": 44.1, "ttft": 1.509}, "mistral-nemo:latest|dependency_resolution": {"score": 1.0, "passed": true, "time": 6.323, "tks": 49.2, "ttft": 1.667}, "mistral-nemo:latest|supervision_triage": {"score": 0.3, "passed": false, "time": 8.434, "tks": 79.7, "ttft": 1.727}, "mistral-nemo:latest|code_clause_extraction": {"score": 1.0, "passed": true, "time": 2.663, "tks": 23.7, "ttft": 1.732}, "mistral-nemo:latest|traceback_triage": {"score": 0.75, "passed": false, "time": 2.623, "tks": 31.3, "ttft": 1.664}, "mistral-nemo:latest|abstract_distillation": {"score": 1.0, "passed": true, "time": 3.118, "tks": 43.6, "ttft": 1.768}, "mistral-nemo:latest|meeting_notes_extraction": {"score": 1.0, "passed": true, "time": 4.297, "tks": 52.6, "ttft": 1.611}, "mistral-nemo:latest|structured_explanation": {"score": 1.0, "passed": true, "time": 5.483, "tks": 66.6, "ttft": 1.504}, "mistral-nemo:latest|student_feedback": {"score": 0.6, "passed": true, "time": 6.721, "tks": 92.5, "ttft": 1.661}, "mistral-nemo:latest|professional_email": {"score": 0.4, "passed": false, "time": 4.78, "tks": 75.9, "ttft": 1.654}, "mistral-nemo:latest|standards_interpretation": {"score": 0.1, "passed": false, "time": 9.491, "tks": 71.5, "ttft": 1.651}, "phi3.5:latest|code_clause_extraction": {"score": 0.0, "passed": false, "time": 286.685, "tks": 0.0, "ttft": 286.685}, "phi3.5:latest|traceback_triage": {"score": 0.75, "passed": false, "time": 0.787, "tks": 169.0, "ttft": 0.054}, "phi3.5:latest|abstract_distillation": {"score": 1.0, "passed": true, "time": 0.93, "tks": 157.0, "ttft": 0.158}, "phi3.5:latest|meeting_notes_extraction": {"score": 1.0, "passed": true, "time": 1.785, "tks": 140.1, "ttft": 0.186}, "qwen2.5-coder:1.5b-base|section_properties": {"score": 0.0, "passed": false, "time": 4.147, "tks": 112.4, "ttft": 1.41}, "qwen2.5-coder:1.5b-base|reliability_pf": {"score": 0.0, "passed": false, "time": 2.438, "tks": 107.9, "ttft": 0.919}, "qwen2.5-coder:1.5b-base|numpy_vectorisation": {"score": 0.3, "passed": false, "time": 2.213, "tks": 74.1, "ttft": 1.167}, "qwen2.5-coder:1.5b-base|pytest_suite": {"score": 1.0, "passed": true, "time": 2.621, "tks": 93.8, "ttft": 0.925}, "qwen2.5-coder:1.5b-base|gsm8k_arithmetic": {"score": 0.0, "passed": false, "time": 2.147, "tks": 116.9, "ttft": 0.931}, "qwen2.5-coder:1.5b-base|logic_puzzle": {"score": 0.0, "passed": false, "time": 4.712, "tks": 167.2, "ttft": 0.912}, "qwen2.5-coder:1.5b-base|code_fizzbuzz_variant": {"score": 0.3, "passed": false, "time": 1.191, "tks": 35.3, "ttft": 0.913}, "qwen2.5-coder:1.5b-base|text_extraction": {"score": 1.0, "passed": true, "time": 1.374, "tks": 52.4, "ttft": 0.905}, "qwen2.5-coder:1.5b-base|beam_design_as3600": {"score": 0.5, "passed": false, "time": 6.951, "tks": 130.1, "ttft": 0.939}, "qwen2.5-coder:1.5b-base|load_combination_stats": {"score": 0.0, "passed": false, "time": 5.258, "tks": 125.7, "ttft": 0.913}, "qwen2.5-coder:1.5b-base|dependency_resolution": {"score": 1.0, "passed": true, "time": 4.009, "tks": 147.4, "ttft": 0.922}, "qwen2.5-coder:1.5b-base|supervision_triage": {"score": 0.1, "passed": false, "time": 2.356, "tks": 192.3, "ttft": 0.91}, "qwen2.5-coder:1.5b-base|code_clause_extraction": {"score": 1.0, "passed": true, "time": 1.416, "tks": 79.8, "ttft": 0.907}, "qwen2.5-coder:1.5b-base|traceback_triage": {"score": 0.75, "passed": false, "time": 1.34, "tks": 70.1, "ttft": 0.898}, "qwen2.5-coder:1.5b-base|abstract_distillation": {"score": 0.8, "passed": false, "time": 1.612, "tks": 108.6, "ttft": 0.924}, "qwen2.5-coder:1.5b-base|meeting_notes_extraction": {"score": 1.0, "passed": true, "time": 2.185, "tks": 158.3, "ttft": 0.915}, "qwen2.5-coder:1.5b-base|structured_explanation": {"score": 1.0, "passed": true, "time": 2.57, "tks": 167.7, "ttft": 1.157}, "qwen2.5-coder:1.5b-base|student_feedback": {"score": 0.0, "passed": false, "time": 1.212, "tks": 61.1, "ttft": 0.903}, "qwen2.5-coder:1.5b-base|professional_email": {"score": 0.5, "passed": true, "time": 2.296, "tks": 154.6, "ttft": 1.159}, "qwen2.5-coder:1.5b-base|standards_interpretation": {"score": 0.0, "passed": false, "time": 4.73, "tks": 196.8, "ttft": 1.152}, "qwen2.5:14b-instruct|section_properties": {"score": 0.0, "passed": false, "time": 18.115, "tks": 34.0, "ttft": 5.307}, "qwen2.5:14b-instruct|reliability_pf": {"score": 0.0, "passed": false, "time": 13.881, "tks": 48.5, "ttft": 1.547}, "qwen2.5:14b-instruct|numpy_vectorisation": {"score": 1.0, "passed": true, "time": 8.637, "tks": 43.2, "ttft": 1.593}, "qwen2.5:14b-instruct|pytest_suite": {"score": 1.0, "passed": true, "time": 8.782, "tks": 31.0, "ttft": 1.59}, "qwen2.5:14b-instruct|gsm8k_arithmetic": {"score": 1.0, "passed": true, "time": 9.386, "tks": 31.9, "ttft": 1.518}, "qwen2.5:14b-instruct|logic_puzzle": {"score": 0.0, "passed": false, "time": 11.876, "tks": 46.9, "ttft": 1.509}, "qwen2.5:14b-instruct|code_fizzbuzz_variant": {"score": 0.3, "passed": false, "time": 6.581, "tks": 41.0, "ttft": 1.504}, "qwen2.5:14b-instruct|text_extraction": {"score": 1.0, "passed": true, "time": 2.517, "tks": 13.5, "ttft": 1.507}, "qwen2.5:14b-instruct|beam_design_as3600": {"score": 1.0, "passed": true, "time": 29.262, "tks": 32.2, "ttft": 1.562}, "qwen2.5:14b-instruct|load_combination_stats": {"score": 0.0, "passed": false, "time": 14.872, "tks": 32.2, "ttft": 1.511}, "qwen2.5:14b-instruct|dependency_resolution": {"score": 1.0, "passed": true, "time": 11.31, "tks": 40.8, "ttft": 1.556}, "qwen2.5:14b-instruct|supervision_triage": {"score": 0.5, "passed": true, "time": 10.271, "tks": 62.6, "ttft": 1.54}, "qwen2.5:14b-instruct|code_clause_extraction": {"score": 1.0, "passed": true, "time": 3.169, "tks": 27.1, "ttft": 1.569}, "qwen2.5:14b-instruct|traceback_triage": {"score": 1.0, "passed": true, "time": 3.054, "tks": 33.1, "ttft": 1.536}, "qwen2.5:14b-instruct|abstract_distillation": {"score": 1.0, "passed": true, "time": 3.306, "tks": 36.6, "ttft": 1.613}, "qwen2.5:14b-instruct|meeting_notes_extraction": {"score": 1.0, "passed": true, "time": 5.503, "tks": 42.0, "ttft": 1.645}, "qwen2.5:14b-instruct|structured_explanation": {"score": 1.0, "passed": true, "time": 7.38, "tks": 55.7, "ttft": 1.511}, "qwen2.5:14b-instruct|student_feedback": {"score": 0.6, "passed": true, "time": 5.538, "tks": 69.3, "ttft": 1.521}, "qwen2.5:14b-instruct|professional_email": {"score": 0.5, "passed": false, "time": 4.313, "tks": 57.5, "ttft": 1.499}, "qwen2.5:14b-instruct|standards_interpretation": {"score": 0.1, "passed": false, "time": 14.694, "tks": 61.9, "ttft": 1.505}, "qwen3.5:27b|code_fizzbuzz_variant": {"score": 0.3, "passed": false, "time": 26.582, "tks": 13.1, "ttft": 20.941}, "qwen3.5:27b|beam_design_as3600": {"score": 1.0, "passed": true, "time": 428.976, "tks": 10.8, "ttft": 303.055}, "qwen3.5:27b|section_properties": {"score": 1.0, "passed": true, "time": 522.465, "tks": 10.6, "ttft": 488.572}, "qwen3.5:27b|reliability_pf": {"score": 1.0, "passed": true, "time": 207.342, "tks": 20.0, "ttft": 186.087}, "qwen3.5:27b|numpy_vectorisation": {"score": 1.0, "passed": true, "time": 156.358, "tks": 20.9, "ttft": 138.118}, "qwen3.5:27b|pytest_suite": {"score": 0.0, "passed": false, "time": 210.2, "tks": 20.7, "ttft": 173.759}, "qwen3.5:27b|gsm8k_arithmetic": {"score": 1.0, "passed": true, "time": 77.917, "tks": 15.5, "ttft": 67.566}, "qwen3.5:27b|logic_puzzle": {"score": 0.0, "passed": false, "time": 300.028, "tks": 17.2, "ttft": 6.722}, "qwen3.5:27b|text_extraction": {"score": 1.0, "passed": true, "time": 36.847, "tks": 20.9, "ttft": 34.769}, "qwen3.5:27b|load_combination_stats": {"score": 0.0, "passed": false, "time": 117.116, "tks": 17.0, "ttft": 79.596}, "qwen3.5:27b|dependency_resolution": {"score": 1.0, "passed": true, "time": 180.105, "tks": 20.0, "ttft": 143.164}, "qwen3.5:27b|supervision_triage": {"score": 0.0, "passed": false, "time": 300.104, "tks": 16.8, "ttft": 0.444}, "qwen3.5:27b|code_clause_extraction": {"score": 1.0, "passed": true, "time": 120.533, "tks": 25.7, "ttft": 115.677}, "qwen3.5:27b|traceback_triage": {"score": 0.75, "passed": false, "time": 47.374, "tks": 20.6, "ttft": 43.94}, "qwen3.5:27b|abstract_distillation": {"score": 1.0, "passed": true, "time": 63.374, "tks": 28.1, "ttft": 59.447}, "qwen3.5:27b|meeting_notes_extraction": {"score": 0.0, "passed": false, "time": 300.032, "tks": 24.9, "ttft": 0.692}, "qwen3.5:27b|structured_explanation": {"score": 1.0, "passed": true, "time": 115.739, "tks": 27.6, "ttft": 100.086}, "qwen3.5:27b|student_feedback": {"score": 0.9, "passed": true, "time": 47.998, "tks": 33.8, "ttft": 41.272}, "qwen3.5:27b|professional_email": {"score": 0.0, "passed": false, "time": 300.035, "tks": 21.4, "ttft": 0.318}, "qwen3.5:27b|standards_interpretation": {"score": 0.0, "passed": false, "time": 300.037, "tks": 19.5, "ttft": 0.31}, "qwen3:0.6b|section_properties": {"score": 0.0, "passed": false, "time": 120.001, "tks": 148.8, "ttft": 0.998}, "qwen3:0.6b|reliability_pf": {"score": 0.0, "passed": false, "time": 120.002, "tks": 198.8, "ttft": 0.992}, "qwen3:0.6b|numpy_vectorisation": {"score": 0.0, "passed": false, "time": 120.005, "tks": 159.4, "ttft": 1.002}, "qwen3:0.6b|pytest_suite": {"score": 1.0, "passed": true, "time": 21.904, "tks": 152.8, "ttft": 20.397}, "qwen3:0.6b|gsm8k_arithmetic": {"score": 1.0, "passed": true, "time": 7.93, "tks": 124.3, "ttft": 6.64}, "qwen3:0.6b|logic_puzzle": {"score": 0.0, "passed": false, "time": 120.007, "tks": 170.5, "ttft": 0.993}, "qwen3:0.6b|code_fizzbuzz_variant": {"score": 0.3, "passed": false, "time": 6.913, "tks": 196.6, "ttft": 5.819}, "qwen3:0.6b|text_extraction": {"score": 1.0, "passed": true, "time": 2.531, "tks": 156.1, "ttft": 2.301}, "qwen3:0.6b|beam_design_as3600": {"score": 0.0, "passed": false, "time": 120.001, "tks": 143.3, "ttft": 1.003}, "qwen3:0.6b|load_combination_stats": {"score": 0.0, "passed": false, "time": 11.767, "tks": 161.1, "ttft": 9.267}, "qwen3:0.6b|dependency_resolution": {"score": 1.0, "passed": true, "time": 10.231, "tks": 184.2, "ttft": 8.641}, "qwen3:0.6b|supervision_triage": {"score": 0.3, "passed": false, "time": 5.368, "tks": 232.7, "ttft": 4.16}, "qwen3:0.6b|code_clause_extraction": {"score": 1.0, "passed": true, "time": 3.215, "tks": 177.0, "ttft": 2.729}, "qwen3:0.6b|traceback_triage": {"score": 1.0, "passed": true, "time": 2.511, "tks": 170.1, "ttft": 2.136}, "qwen3:0.6b|abstract_distillation": {"score": 1.0, "passed": true, "time": 2.195, "tks": 174.5, "ttft": 1.808}, "qwen3:0.6b|meeting_notes_extraction": {"score": 1.0, "passed": true, "time": 2.726, "tks": 195.9, "ttft": 1.849}, "qwen3:0.6b|structured_explanation": {"score": 1.0, "passed": true, "time": 2.969, "tks": 222.3, "ttft": 2.174}, "qwen3:0.6b|student_feedback": {"score": 0.4, "passed": false, "time": 2.46, "tks": 226.0, "ttft": 1.56}, "qwen3:0.6b|professional_email": {"score": 0.4, "passed": false, "time": 2.33, "tks": 194.4, "ttft": 1.642}, "qwen3:0.6b|standards_interpretation": {"score": 0.1, "passed": false, "time": 4.008, "tks": 201.3, "ttft": 2.714}, "qwen3:1.7b|section_properties": {"score": 0.0, "passed": false, "time": 120.003, "tks": 128.5, "ttft": 1.012}, "qwen3:1.7b|reliability_pf": {"score": 0.0, "passed": false, "time": 120.002, "tks": 153.3, "ttft": 1.009}, "qwen3:1.7b|numpy_vectorisation": {"score": 0.0, "passed": false, "time": 24.077, "tks": 160.2, "ttft": 21.177}, "qwen3:1.7b|pytest_suite": {"score": 1.0, "passed": true, "time": 36.361, "tks": 155.5, "ttft": 33.756}, "qwen3:1.7b|gsm8k_arithmetic": {"score": 1.0, "passed": true, "time": 8.709, "tks": 114.4, "ttft": 7.204}, "qwen3:1.7b|logic_puzzle": {"score": 0.5, "passed": false, "time": 36.735, "tks": 157.9, "ttft": 30.66}, "qwen3:1.7b|code_fizzbuzz_variant": {"score": 0.3, "passed": false, "time": 9.757, "tks": 146.3, "ttft": 5.959}, "qwen3:1.7b|text_extraction": {"score": 1.0, "passed": true, "time": 3.751, "tks": 128.2, "ttft": 3.466}, "qwen3:1.7b|beam_design_as3600": {"score": 0.0, "passed": false, "time": 120.002, "tks": 116.5, "ttft": 1.023}, "qwen3:1.7b|load_combination_stats": {"score": 1.0, "passed": true, "time": 44.102, "tks": 113.9, "ttft": 40.536}, "qwen3:1.7b|dependency_resolution": {"score": 1.0, "passed": true, "time": 24.791, "tks": 154.7, "ttft": 20.53}, "qwen3:1.7b|supervision_triage": {"score": 0.4, "passed": false, "time": 19.001, "tks": 189.3, "ttft": 16.473}, "qwen3:1.7b|code_clause_extraction": {"score": 1.0, "passed": true, "time": 4.915, "tks": 155.4, "ttft": 4.592}, "qwen3:1.7b|traceback_triage": {"score": 1.0, "passed": true, "time": 2.68, "tks": 140.3, "ttft": 2.333}, "qwen3:1.7b|abstract_distillation": {"score": 1.0, "passed": true, "time": 2.689, "tks": 159.2, "ttft": 2.193}, "qwen3:1.7b|meeting_notes_extraction": {"score": 1.0, "passed": true, "time": 6.045, "tks": 201.3, "ttft": 5.15}, "qwen3:1.7b|structured_explanation": {"score": 1.0, "passed": true, "time": 4.547, "tks": 199.5, "ttft": 3.284}, "qwen3:1.7b|student_feedback": {"score": 0.7, "passed": true, "time": 3.347, "tks": 224.4, "ttft": 2.359}, "qwen3:1.7b|professional_email": {"score": 0.4, "passed": false, "time": 3.816, "tks": 198.1, "ttft": 2.768}, "qwen3:1.7b|standards_interpretation": {"score": 0.1, "passed": false, "time": 12.841, "tks": 189.2, "ttft": 7.557}, "qwen3:14b|section_properties": {"score": 0.3, "passed": false, "time": 377.113, "tks": 34.1, "ttft": 343.967}, "qwen3:14b|reliability_pf": {"score": 1.0, "passed": true, "time": 106.883, "tks": 50.9, "ttft": 101.213}, "qwen3:14b|numpy_vectorisation": {"score": 0.0, "passed": false, "time": 64.941, "tks": 55.3, "ttft": 56.095}, "qwen3:14b|pytest_suite": {"score": 1.0, "passed": true, "time": 100.471, "tks": 52.5, "ttft": 93.646}, "qwen3:14b|gsm8k_arithmetic": {"score": 0.0, "passed": false, "time": 180.005, "tks": 20.0, "ttft": 0.196}, "qwen3:14b|logic_puzzle": {"score": 0.5, "passed": false, "time": 162.553, "tks": 45.4, "ttft": 143.599}, "qwen3:14b|code_fizzbuzz_variant": {"score": 0.3, "passed": false, "time": 98.195, "tks": 47.1, "ttft": 82.601}, "qwen3:14b|text_extraction": {"score": 1.0, "passed": true, "time": 9.146, "tks": 55.7, "ttft": 8.241}, "qwen3:14b|beam_design_as3600": {"score": 1.0, "passed": true, "time": 304.423, "tks": 28.9, "ttft": 272.868}, "qwen3:14b|load_combination_stats": {"score": 1.0, "passed": true, "time": 152.613, "tks": 37.7, "ttft": 140.51}, "qwen3:14b|dependency_resolution": {"score": 1.0, "passed": true, "time": 41.886, "tks": 45.3, "ttft": 29.343}, "qwen3:14b|supervision_triage": {"score": 0.5, "passed": false, "time": 36.241, "tks": 67.8, "ttft": 24.106}, "qwen3:14b|code_clause_extraction": {"score": 1.0, "passed": true, "time": 36.423, "tks": 50.8, "ttft": 34.551}, "qwen3:14b|traceback_triage": {"score": 0.75, "passed": false, "time": 10.104, "tks": 67.9, "ttft": 8.5}, "qwen3:14b|abstract_distillation": {"score": 1.0, "passed": true, "time": 5.143, "tks": 69.2, "ttft": 3.365}, "qwen3:14b|meeting_notes_extraction": {"score": 1.0, "passed": true, "time": 13.648, "tks": 68.7, "ttft": 9.147}, "qwen3:14b|structured_explanation": {"score": 1.0, "passed": true, "time": 13.986, "tks": 74.2, "ttft": 8.194}, "qwen3:14b|student_feedback": {"score": 0.9, "passed": true, "time": 9.365, "tks": 86.8, "ttft": 5.641}, "qwen3:14b|professional_email": {"score": 0.6, "passed": true, "time": 8.589, "tks": 78.8, "ttft": 5.422}, "qwen3:14b|standards_interpretation": {"score": 0.3, "passed": false, "time": 36.446, "tks": 57.1, "ttft": 16.267}, "qwen3:30b-a3b|section_properties": {"score": 1.0, "passed": true, "time": 76.337, "tks": 55.3, "ttft": 61.845}, "qwen3:30b-a3b|reliability_pf": {"score": 1.0, "passed": true, "time": 53.475, "tks": 67.0, "ttft": 41.216}, "qwen3:30b-a3b|numpy_vectorisation": {"score": 1.0, "passed": true, "time": 33.659, "tks": 64.5, "ttft": 25.956}, "qwen3:30b-a3b|pytest_suite": {"score": 1.0, "passed": true, "time": 62.426, "tks": 67.9, "ttft": 53.362}, "qwen3:30b-a3b|gsm8k_arithmetic": {"score": 1.0, "passed": true, "time": 18.523, "tks": 40.7, "ttft": 15.279}, "qwen3:30b-a3b|logic_puzzle": {"score": 0.5, "passed": false, "time": 122.016, "tks": 67.3, "ttft": 112.828}, "qwen3:30b-a3b|code_fizzbuzz_variant": {"score": 0.3, "passed": false, "time": 38.059, "tks": 55.2, "ttft": 26.967}, "qwen3:30b-a3b|text_extraction": {"score": 1.0, "passed": true, "time": 17.906, "tks": 67.4, "ttft": 17.293}, "qwen3:30b-a3b|beam_design_as3600": {"score": 1.0, "passed": true, "time": 66.543, "tks": 42.7, "ttft": 45.954}, "qwen3:30b-a3b|load_combination_stats": {"score": 1.0, "passed": true, "time": 34.67, "tks": 50.9, "ttft": 23.971}, "qwen3:30b-a3b|dependency_resolution": {"score": 1.0, "passed": true, "time": 36.787, "tks": 57.6, "ttft": 28.156}, "qwen3:30b-a3b|supervision_triage": {"score": 0.8, "passed": true, "time": 66.623, "tks": 86.3, "ttft": 47.887}, "qwen3:30b-a3b|code_clause_extraction": {"score": 1.0, "passed": true, "time": 19.207, "tks": 77.6, "ttft": 18.177}, "qwen3:30b-a3b|traceback_triage": {"score": 0.75, "passed": false, "time": 7.305, "tks": 55.3, "ttft": 6.432}, "qwen3:30b-a3b|abstract_distillation": {"score": 1.0, "passed": true, "time": 8.463, "tks": 70.5, "ttft": 7.375}, "qwen3:30b-a3b|meeting_notes_extraction": {"score": 1.0, "passed": true, "time": 31.141, "tks": 93.9, "ttft": 28.797}, "qwen3:30b-a3b|structured_explanation": {"score": 1.0, "passed": true, "time": 12.713, "tks": 81.6, "ttft": 8.617}, "qwen3:30b-a3b|student_feedback": {"score": 0.9, "passed": true, "time": 9.313, "tks": 84.3, "ttft": 6.213}, "qwen3:30b-a3b|professional_email": {"score": 0.8, "passed": true, "time": 11.185, "tks": 81.2, "ttft": 9.066}, "qwen3:30b-a3b|standards_interpretation": {"score": 0.2, "passed": false, "time": 87.137, "tks": 69.9, "ttft": 60.027}, "qwen3:4b|section_properties": {"score": 0.0, "passed": false, "time": 120.009, "tks": 65.8, "ttft": 1.243}, "qwen3:4b|reliability_pf": {"score": 1.0, "passed": true, "time": 86.931, "tks": 101.8, "ttft": 80.541}, "qwen3:4b|numpy_vectorisation": {"score": 0.0, "passed": false, "time": 46.214, "tks": 99.8, "ttft": 41.135}, "qwen3:4b|pytest_suite": {"score": 1.0, "passed": true, "time": 67.609, "tks": 95.0, "ttft": 62.222}, "qwen3:4b|gsm8k_arithmetic": {"score": 1.0, "passed": true, "time": 11.311, "tks": 69.0, "ttft": 8.693}, "qwen3:4b|logic_puzzle": {"score": 0.0, "passed": false, "time": 74.946, "tks": 102.8, "ttft": 68.604}, "qwen3:4b|code_fizzbuzz_variant": {"score": 0.3, "passed": false, "time": 43.536, "tks": 95.0, "ttft": 38.856}, "qwen3:4b|text_extraction": {"score": 1.0, "passed": true, "time": 30.127, "tks": 115.9, "ttft": 29.751}, "qwen3:4b|beam_design_as3600": {"score": 1.0, "passed": true, "time": 94.14, "tks": 72.7, "ttft": 82.377}, "qwen3:4b|load_combination_stats": {"score": 1.0, "passed": true, "time": 24.324, "tks": 75.2, "ttft": 17.816}, "qwen3:4b|dependency_resolution": {"score": 1.0, "passed": true, "time": 36.67, "tks": 97.9, "ttft": 28.593}, "qwen3:4b|supervision_triage": {"score": 0.7, "passed": true, "time": 43.355, "tks": 133.2, "ttft": 29.211}, "qwen3:4b|code_clause_extraction": {"score": 1.0, "passed": true, "time": 39.194, "tks": 131.5, "ttft": 38.411}, "qwen3:4b|traceback_triage": {"score": 0.75, "passed": false, "time": 8.867, "tks": 111.8, "ttft": 8.327}, "qwen3:4b|abstract_distillation": {"score": 1.0, "passed": true, "time": 6.395, "tks": 124.3, "ttft": 5.627}, "qwen3:4b|meeting_notes_extraction": {"score": 1.0, "passed": true, "time": 50.702, "tks": 140.8, "ttft": 48.619}, "qwen3:4b|structured_explanation": {"score": 1.0, "passed": true, "time": 47.355, "tks": 136.4, "ttft": 44.721}, "qwen3:4b|student_feedback": {"score": 0.9, "passed": true, "time": 6.62, "tks": 151.2, "ttft": 4.446}, "qwen3:4b|professional_email": {"score": 0.8, "passed": true, "time": 6.21, "tks": 131.4, "ttft": 4.879}, "qwen3:4b|standards_interpretation": {"score": 0.1, "passed": false, "time": 37.955, "tks": 103.4, "ttft": 19.088}}};
+
+// Chart.js global defaults
+Chart.defaults.color = '#8888aa';
+Chart.defaults.borderColor = '#2a2a4a';
+Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+
+// Inline plugin: draw value labels to the right of horizontal bars
+const barLabelPlugin = {
+  id: 'barLabels',
+  afterDatasetsDraw(chart) {
+    const ctx = chart.ctx;
+    chart.data.datasets.forEach((ds, di) => {
+      const meta = chart.getDatasetMeta(di);
+      meta.data.forEach((bar, i) => {
+        const val = ds.data[i];
+        if (val == null) return;
+        const label = ds._labelFn ? ds._labelFn(val) : val;
+        ctx.save();
+        ctx.fillStyle = '#e8e8f0';
+        ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, bar.x + 8, bar.y);
+        ctx.restore();
+      });
+    });
+  }
+};
+
+// ── Filter state ──
+let activeModels = new Set(D.models);
+let charts = {};
+
+// ── Build filter bar ──
+const filterEl = document.getElementById('modelFilters');
+const tierEl = document.getElementById('tierFilters');
+
+// Get unique tiers
+const tiers = [...new Set(D.models.map(m => (D.modelMeta[m] || {}).tier).filter(Boolean))];
+const tierOrder = {'8GB': 0, '16GB': 1, '24GB': 2};
+tiers.sort((a, b) => (tierOrder[a] || 0) - (tierOrder[b] || 0));
+
+// Model toggle buttons
+D.models.forEach(m => {
+  const btn = document.createElement('button');
+  btn.className = 'filter-btn active';
+  const meta = D.modelMeta[m];
+  const tierTag = meta ? `<span class="tier-tag">${meta.tier}</span>` : '';
+  btn.innerHTML = `<span class="dot" style="background:${D.colours[m]}"></span>${m} ${tierTag}`;
+  btn.onclick = () => {
+    if (activeModels.has(m)) {
+      if (activeModels.size <= 1) return; // keep at least one
+      activeModels.delete(m);
+      btn.classList.remove('active');
+    } else {
+      activeModels.add(m);
+      btn.classList.add('active');
+    }
+    rebuild();
+  };
+  filterEl.appendChild(btn);
+});
+
+// Tier quick-select buttons
+tiers.forEach(tier => {
+  const btn = document.createElement('button');
+  btn.className = 'tier-btn';
+  btn.textContent = tier;
+  btn.onclick = () => {
+    const tierModels = D.models.filter(m => (D.modelMeta[m] || {}).tier === tier);
+    // If all tier models are active and only them, show all instead (toggle off)
+    const allActive = tierModels.every(m => activeModels.has(m));
+    const onlyThem = activeModels.size === tierModels.length;
+    if (allActive && onlyThem) {
+      // Reset to all
+      activeModels = new Set(D.models);
+    } else {
+      activeModels = new Set(tierModels);
+    }
+    // Update model button states
+    document.querySelectorAll('#modelFilters .filter-btn').forEach((b, i) => {
+      b.classList.toggle('active', activeModels.has(D.models[i]));
+    });
+    // Update tier button states
+    document.querySelectorAll('#tierFilters .tier-btn').forEach(b => {
+      b.classList.toggle('active', b.textContent === tier && !allActive);
+    });
+    rebuild();
+  };
+  tierEl.appendChild(btn);
+});
+
+// All button
+const allBtn = document.createElement('button');
+allBtn.className = 'tier-btn active';
+allBtn.textContent = 'All';
+allBtn.onclick = () => {
+  activeModels = new Set(D.models);
+  document.querySelectorAll('#modelFilters .filter-btn').forEach(b => b.classList.add('active'));
+  document.querySelectorAll('#tierFilters .tier-btn').forEach(b => b.classList.remove('active'));
+  allBtn.classList.add('active');
+  rebuild();
+};
+tierEl.insertBefore(allBtn, tierEl.firstChild);
+
+function rebuild() {
+  const models = D.models.filter(m => activeModels.has(m));
+
+  // Update All button state
+  allBtn.classList.toggle('active', models.length === D.models.length);
+
+  // ── Summary cards ──
+  const cardsEl = document.getElementById('summaryCards');
+  cardsEl.innerHTML = '';
+  models.forEach(m => {
+    const s = D.summary[m];
+    if (!s) return;
+    const col = D.colours[m];
+    const pct = Math.round(s.passed / s.tests * 100);
+    const meta = D.modelMeta[m];
+    const metaLine = meta
+      ? `<div class="stat">${meta.params} &middot; ${meta.quant} &middot; ~${meta.vram_gb}GB</div>
+         <div class="stat badge-tier" style="margin-top:4px">${meta.tier} VRAM tier</div>`
+      : '';
+    cardsEl.innerHTML += `
+      <div class="model-card" style="border-top-color:${col}">
+        <div class="name">${m}</div>
+        ${metaLine}
+        <div class="big" style="color:${col}">${pct}%</div>
+        <div class="stat">${s.complete ? '' : `<span style="color:var(--yellow);font-weight:600">&#9888; ${s.tests}/${s.total_tests} tests run</span><br>`}pass rate: ${s.passed}/${s.tests}</div>
+        <div class="stat">avg score: ${(s.avg_score * 100).toFixed(0)}%</div>
+        <div class="stat">${s.tk_s} tk/s &middot; ${s.avg_time}s avg</div>
+        <div class="stat">${s.total_tokens.toLocaleString()} tokens</div>
+      </div>`;
+  });
+
+  // ── Radar chart ──
+  if (charts.radar) charts.radar.destroy();
+  charts.radar = new Chart(document.getElementById('radarChart'), {
+    type: 'radar',
+    data: {
+      labels: D.categories,
+      datasets: models.map(m => ({
+        label: m,
+        data: D.categories.map((_, i) => D.catScores[m][D.categoriesRaw[i]]),
+        borderColor: D.colours[m],
+        backgroundColor: D.colours[m] + '22',
+        borderWidth: 2,
+        pointRadius: 4,
+        pointBackgroundColor: D.colours[m],
+      }))
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      scales: {
+        r: {
+          min: 0, max: 1,
+          ticks: { stepSize: 0.2, backdropColor: 'transparent' },
+          grid: { color: '#2a2a4a' },
+          angleLines: { color: '#2a2a4a' },
+          pointLabels: { font: { size: 13 }, color: '#e8e8f0' },
+        }
+      },
+      plugins: {
+        legend: { position: 'bottom', labels: { padding: 20, usePointStyle: true } },
+        tooltip: {
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: ${(ctx.parsed.r * 100).toFixed(0)}%`
+          }
+        }
+      }
+    }
+  });
+
+  // ── Pass rate bar chart ──
+  if (charts.passRate) charts.passRate.destroy();
+  charts.passRate = new Chart(document.getElementById('passRateChart'), {
+    type: 'bar',
+    data: {
+      labels: models,
+      datasets: [{
+        data: models.map(m => D.passRates[m]),
+        backgroundColor: models.map(m => D.colours[m] + 'cc'),
+        borderColor: models.map(m => D.colours[m]),
+        borderWidth: 1,
+        borderRadius: 6,
+        _labelFn: v => (v * 100).toFixed(0) + '%',
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      layout: { padding: { right: 50 } },
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: ctx => (ctx.parsed.x * 100).toFixed(0) + '%' } }
+      },
+      scales: {
+        x: { min: 0, max: 1, ticks: { callback: v => (v * 100) + '%' } },
+        y: { ticks: { font: { size: 12 } } }
+      }
+    },
+    plugins: [barLabelPlugin]
+  });
+
+  // ── Performance chart ──
+  if (charts.perf) charts.perf.destroy();
+  charts.perf = new Chart(document.getElementById('perfChart'), {
+    type: 'bar',
+    data: {
+      labels: models,
+      datasets: [{
+        label: 'tk/s',
+        data: models.map(m => D.perfTks[m]),
+        backgroundColor: models.map(m => D.colours[m] + 'cc'),
+        borderColor: models.map(m => D.colours[m]),
+        borderWidth: 1,
+        borderRadius: 6,
+        _labelFn: v => v.toFixed(1) + ' tk/s',
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      layout: { padding: { right: 70 } },
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: ctx => ctx.parsed.x.toFixed(1) + ' tk/s' } }
+      },
+      scales: {
+        x: { beginAtZero: true, title: { display: true, text: 'tokens / second' } },
+        y: { ticks: { font: { size: 12 } } }
+      }
+    },
+    plugins: [barLabelPlugin]
+  });
+
+  // ── Per-test grouped bar chart ──
+  if (charts.testScores) charts.testScores.destroy();
+  charts.testScores = new Chart(document.getElementById('testScoresChart'), {
+    type: 'bar',
+    data: {
+      labels: D.testLabels,
+      datasets: models.map(m => ({
+        label: m,
+        data: D.testNames.map(t => D.testScores[t][m]),
+        backgroundColor: D.colours[m] + 'cc',
+        borderColor: D.colours[m],
+        borderWidth: 1,
+        borderRadius: 4,
+      }))
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { usePointStyle: true, padding: 16 } },
+        tooltip: {
+          callbacks: {
+            title: items => D.testCategories[items[0].dataIndex] + ' / ' + items[0].label,
+            label: ctx => ctx.dataset.label + ': ' + (ctx.parsed.y != null ? (ctx.parsed.y * 100).toFixed(0) + '%' : 'N/A'),
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { maxRotation: 45, minRotation: 30, font: { size: 11 } } },
+        y: { min: 0, max: 1, ticks: { callback: v => (v * 100) + '%' } },
+      }
+    }
+  });
+
+  // ── Results table ──
+  const tbl = document.getElementById('resultsTable');
+  let thead = '<thead><tr><th>Category</th><th>Test</th>';
+  models.forEach(m => { thead += `<th class="score-cell">${m}</th>`; });
+  thead += '</tr></thead>';
+
+  let tbody = '<tbody>';
+  let lastCat = '';
+  D.testNames.forEach((t, i) => {
+    const cat = D.testCategories[i];
+    const catLabel = cat !== lastCat ? cat : '';
+    lastCat = cat;
+    tbody += `<tr><td>${catLabel}</td><td>${D.testLabels[i]}</td>`;
+    models.forEach(m => {
+      const key = m + '|' + t;
+      const r = D.lookup[key];
+      if (!r) { tbody += '<td class="score-cell">&mdash;</td>'; return; }
+      const cls = r.passed ? 'badge-pass' : 'badge-fail';
+      const icon = r.passed ? '✓' : '✗';
+      tbody += `<td class="score-cell"><span class="badge ${cls}">${icon} ${(r.score * 100).toFixed(0)}%</span> <span style="color:#8888aa;font-size:0.75rem">${r.time.toFixed(1)}s</span></td>`;
+    });
+    tbody += '</tr>';
+  });
+  tbody += '</tbody>';
+  tbl.innerHTML = thead + tbody;
+}
+
+// Initial render
+rebuild();
+</script>
+</body>
+</html>

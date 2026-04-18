@@ -1,0 +1,17 @@
+:root {
+  --shibuya-color-brand-primary: #d94f04;
+  --shibuya-color-brand-secondary: #ffb36b;
+}
+
+.hero {
+  padding: 1rem 0 0.5rem;
+}
+
+.bd-content .sd-card,
+.bd-content .admonition {
+  border-radius: 12px;
+}
+
+iframe[title="Example Crucible report"] {
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.12);
+}
